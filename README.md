@@ -1,0 +1,1 @@
+A chess client and engine to defeat my friend ethan.
