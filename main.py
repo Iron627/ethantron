@@ -44,7 +44,15 @@ class Board:
                     continue
                 screen.blit(piece_imgs[piece],((col_no * cell_width) + 10, (row_no * cell_height) + 10))
 
-
+    def eval(self):
+        score = 0
+        for row in self.board:
+            for piece in row:
+                if 1 <= piece <= 6:
+                    score -= get_material_value(piece)
+                elif piece != 0 and piece > 6:
+                    score += get_material_value(piece)
+        return score
 
 
 
