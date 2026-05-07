@@ -17,7 +17,16 @@ def get_material_value(piece):
 class Board:
     def __init__(self,screen):
         self.screen = screen
-        self.board = [[]]
+        self.board = [
+            [10, 8, 9, 11, 12, 9, 8, 10],
+            [7, 7, 7, 7, 7, 7, 7, 7],
+            [0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, 0, 0, 0],
+            [0, 0, 0, 0, 0, 0, 0, 0],
+            [1, 1, 1, 1, 1, 1, 1, 1],
+            [4, 2, 3, 5, 6, 3, 2, 4],
+        ]
 
 while running:
     for event in pygame.event.get():
