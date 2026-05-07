@@ -4,7 +4,8 @@ SCREEN_HEIGHT,SCREEN_WIDTH = 1024,1024
 screen = pygame.display.set_mode((SCREEN_HEIGHT,SCREEN_WIDTH))
 running = True
 clock = pygame.time.Clock()
-
+WHITE = "#c2c2c2"
+BLACK = "#2a4537"
 # Piece Map: 0: empty space, 1: Pawn, 2: Knight, 3: Bishop, 4: Rook, 5: Queen, 6: King
 #            7: Black Pawn, 8: Black Knight, 9: Black Bishop, 10: Black Rook, 11: Black Queen, 12: Black King
 material_values = {0:0,1:1,2:3,3:3,4:5,5:9,6:0}
@@ -32,7 +33,7 @@ class Board:
         cell_height = SCREEN_HEIGHT // 8
         for row_no, row in enumerate(self.board):
             for col_no, _ in enumerate(row):
-                color = "white" if (row_no + col_no) % 2 == 0 else "black"
+                color = WHITE if (row_no + col_no) % 2 == 0 else BLACK
                 rect = (row_no * cell_width, col_no * cell_height, cell_width, cell_height)
                 pygame.draw.rect(self.screen, color, rect)
 
