@@ -1,7 +1,7 @@
 import pygame
 pygame.init()
 SCREEN_HEIGHT,SCREEN_WIDTH = 1024,1024
-screen = pygame.display.set_mode((SCREEN_HEIGHT,SCREEN_WIDTH))
+screen = pygame.display.set_mode((SCREEN_WIDTH,SCREEN_HEIGHT))
 running = True
 clock = pygame.time.Clock()
 WHITE = "#c2c2c2"
@@ -9,7 +9,9 @@ BLACK = "#2a4537"
 # Piece Map: 0: empty space, 1: Pawn, 2: Knight, 3: Bishop, 4: Rook, 5: Queen, 6: King
 #            7: Black Pawn, 8: Black Knight, 9: Black Bishop, 10: Black Rook, 11: Black Queen, 12: Black King
 material_values = {0:0,1:1,2:3,3:3,4:5,5:9,6:0}
-
+piece_imgs = {}
+for piece in range(1,13):
+    piece_imgs[piece] = pygame.transform.scale(pygame.image.load(f'assets/{piece}.png').convert_alpha(), (100,100))
 def get_material_value(piece):
     if piece > 6:
         piece -= 6
@@ -36,6 +38,12 @@ class Board:
                 color = WHITE if (row_no + col_no) % 2 == 0 else BLACK
                 rect = (row_no * cell_width, col_no * cell_height, cell_width, cell_height)
                 pygame.draw.rect(self.screen, color, rect)
+        for row_no, row in enumerate(self.board):
+            for col_no, piece in enumerate(row):
+                if piece == 0:
+                    continue
+                screen.blit(piece_imgs[piece],((col_no * cell_width) + 10, (row_no * cell_height) + 10))
+
 
 
 
