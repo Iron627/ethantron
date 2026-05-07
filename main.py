@@ -6,6 +6,7 @@ running = True
 clock = pygame.time.Clock()
 WHITE = "#c2c2c2"
 BLACK = "#2a4537"
+HIGHLIGHT = (255, 210, 84,50)
 # Piece Map: 0: empty space, 1: Pawn, 2: Knight, 3: Bishop, 4: Rook, 5: Queen, 6: King
 #            7: Black Pawn, 8: Black Knight, 9: Black Bishop, 10: Black Rook, 11: Black Queen, 12: Black King
 material_values = {0:0,1:1,2:3,3:3,4:5,5:9,6:0}
@@ -16,6 +17,14 @@ def get_material_value(piece):
     if piece > 6:
         piece -= 6
     return material_values[piece]
+
+def get_mouse_cell():
+    x, y = pygame.mouse.get_pos()
+    cell_width = SCREEN_WIDTH // 8
+    cell_height = SCREEN_HEIGHT // 8
+    cell = (y // cell_height, x // cell_width)
+    return cell
+
 
 class Board:
     def __init__(self,screen):
@@ -30,14 +39,21 @@ class Board:
             [1, 1, 1, 1, 1, 1, 1, 1],
             [4, 2, 3, 5, 6, 3, 2, 4],
         ]
+        self.hovered = None
     def draw(self):
         cell_width = SCREEN_WIDTH // 8
         cell_height = SCREEN_HEIGHT // 8
         for row_no, row in enumerate(self.board):
             for col_no, _ in enumerate(row):
                 color = WHITE if (row_no + col_no) % 2 == 0 else BLACK
-                rect = (row_no * cell_width, col_no * cell_height, cell_width, cell_height)
+                rect = (col_no * cell_width, row_no * cell_height, cell_width, cell_height)
                 pygame.draw.rect(self.screen, color, rect)
+        if self.hovered is not None:
+            row_no = self.hovered[0]
+            col_no = self.hovered[1]
+            highlight = pygame.Surface((cell_width, cell_height), pygame.SRCALPHA)
+            highlight.fill(HIGHLIGHT)
+            self.screen.blit(highlight, (col_no * cell_width, row_no * cell_height))
         for row_no, row in enumerate(self.board):
             for col_no, piece in enumerate(row):
                 if piece == 0:
@@ -61,6 +77,10 @@ while running:
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             running = False
+
+
+    if get_mouse_cell():
+        game_board.hovered = get_mouse_cell()
     game_board.draw()
     pygame.display.flip()
     clock.tick(240)
