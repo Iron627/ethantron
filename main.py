@@ -7,6 +7,7 @@ clock = pygame.time.Clock()
 WHITE = "#c2c2c2"
 BLACK = "#2a4537"
 HIGHLIGHT = (255, 210, 84,50)
+SELECTED_HIGHLIGHT = (80, 170, 255, 90)
 # Piece Map: 0: empty space, 1: Pawn, 2: Knight, 3: Bishop, 4: Rook, 5: Queen, 6: King
 #            7: Black Pawn, 8: Black Knight, 9: Black Bishop, 10: Black Rook, 11: Black Queen, 12: Black King
 material_values = {0:0,1:1,2:3,3:3,4:5,5:9,6:0}
@@ -40,6 +41,9 @@ class Board:
             [4, 2, 3, 5, 6, 3, 2, 4],
         ]
         self.hovered = None
+        self.selected = None
+    def get_piece(self, i):
+        return self.board[i[0]][i[1]]
     def draw(self):
         cell_width = SCREEN_WIDTH // 8
         cell_height = SCREEN_HEIGHT // 8
@@ -54,8 +58,15 @@ class Board:
             highlight = pygame.Surface((cell_width, cell_height), pygame.SRCALPHA)
             highlight.fill(HIGHLIGHT)
             self.screen.blit(highlight, (col_no * cell_width, row_no * cell_height))
+        if self.selected is not None:
+            row_no = self.selected[0]
+            col_no = self.selected[1]
+            selected_highlight = pygame.Surface((cell_width, cell_height), pygame.SRCALPHA)
+            selected_highlight.fill(SELECTED_HIGHLIGHT)
+            self.screen.blit(selected_highlight, (col_no * cell_width, row_no * cell_height))
         for row_no, row in enumerate(self.board):
-            for col_no, piece in enumerate(row):
+            for col_no, _ in enumerate(row):
+                piece = self.get_piece((row_no, col_no))
                 if piece == 0:
                     continue
                 screen.blit(piece_imgs[piece],((col_no * cell_width) + 10, (row_no * cell_height) + 10))
@@ -69,14 +80,25 @@ class Board:
                 elif piece != 0 and piece > 6:
                     score += get_material_value(piece)
         return score
-
-
+    def move_piece(self,i,f):
+        self.board[f[0]][f[1]] = self.get_piece(i)
+        self.board[i[0]][i[1]] = 0
 
 game_board = Board(screen)
+picked = False
 while running:
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             running = False
+        if event.type == pygame.MOUSEBUTTONDOWN:
+            if not picked and game_board.get_piece(get_mouse_cell()):
+                picked = True
+                picked_cell = get_mouse_cell()
+                game_board.selected = picked_cell
+            elif picked:
+                picked = False
+                game_board.move_piece(picked_cell,get_mouse_cell())
+                game_board.selected = None
 
 
     if get_mouse_cell():
