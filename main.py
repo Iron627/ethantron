@@ -287,24 +287,25 @@ while running:
         if event.type == pygame.QUIT:
             running = False
         if event.type == pygame.MOUSEBUTTONDOWN:
-            if not picked and 0 < game_board.get_piece(get_mouse_cell(), game_board.board) < 7:
-                picked = True
-                picked_cell = get_mouse_cell()
-                game_board.selected = picked_cell
-            elif picked:
-                if game_board.get_piece(get_mouse_cell(), game_board.board) == 0 and get_mouse_cell() not in game_board.get_legal_moves(picked_cell, game_board.board):
-                    picked = False
-                    game_board.selected = None
-                    picked_cell = None
-                elif get_mouse_cell() not in game_board.get_legal_moves(picked_cell, game_board.board):
-                    picked = False
-                    game_board.selected = None
-                    picked_cell = None
-                elif get_mouse_cell() != picked_cell and get_mouse_cell() in game_board.get_legal_moves(picked_cell, game_board.board):
-                    picked = False
-                    game_board.move_piece(picked_cell,get_mouse_cell())
-                    game_board.selected = None
-
+            if not game_board.turn:
+                if not picked and 0 < game_board.get_piece(get_mouse_cell(), game_board.board) < 7:
+                    picked = True
+                    picked_cell = get_mouse_cell()
+                    game_board.selected = picked_cell
+                elif picked:
+                    if game_board.get_piece(get_mouse_cell(), game_board.board) == 0 and get_mouse_cell() not in game_board.get_legal_moves(picked_cell, game_board.board):
+                        picked = False
+                        game_board.selected = None
+                        picked_cell = None
+                    elif get_mouse_cell() not in game_board.get_legal_moves(picked_cell, game_board.board):
+                        picked = False
+                        game_board.selected = None
+                        picked_cell = None
+                    elif get_mouse_cell() != picked_cell and get_mouse_cell() in game_board.get_legal_moves(picked_cell, game_board.board):
+                        picked = False
+                        game_board.move_piece(picked_cell,get_mouse_cell())
+                        game_board.selected = None
+                        game_board.turn = not game_board.turn
 
     if get_mouse_cell():
         game_board.hovered = get_mouse_cell()
