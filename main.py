@@ -44,8 +44,32 @@ class Board:
         self.selected = None
         self.turn = False
         self.en_passant_target = None
-    def get_piece(self, i):
-        return self.board[i[0]][i[1]]
+    def is_in_check(self, color, board):
+        king_piece = 6 if color == 'white' else 12
+        king_pos = None
+        for row_no in range(8):
+            for col_no in range(8):
+                if board[row_no][col_no] == king_piece:
+                    king_pos = (row_no, col_no)
+                    break
+            if king_pos is not None:
+                break
+
+        if king_pos is None:
+            return False
+
+        is_opponent_piece = (lambda p: 7 <= p <= 12) if color == 'white' else (lambda p: 1 <= p <= 6)
+        for row_no in range(8):
+            for col_no in range(8):
+                piece = board[row_no][col_no]
+                if not is_opponent_piece(piece):
+                    continue
+                legal_moves = self.get_legal_moves((row_no, col_no), board, validate_check=False)
+                if king_pos in legal_moves:
+                    return True
+        return False
+    def get_piece(self, i,board):
+        return board[i[0]][i[1]]
     def draw(self):
         cell_width = SCREEN_WIDTH // 8
         cell_height = SCREEN_HEIGHT // 8
@@ -63,7 +87,7 @@ class Board:
         
         for row_no, row in enumerate(self.board):
             for col_no, _ in enumerate(row):
-                piece = self.get_piece((row_no, col_no))
+                piece = self.get_piece((row_no, col_no), self.board)
                 if piece == 0:
                     continue
                 screen.blit(piece_imgs[piece],((col_no * cell_width) + 10, (row_no * cell_height) + 10))
@@ -73,7 +97,7 @@ class Board:
             selected_highlight = pygame.Surface((cell_width, cell_height), pygame.SRCALPHA)
             selected_highlight.fill(SELECTED_HIGHLIGHT)
             self.screen.blit(selected_highlight, (col_no * cell_width, row_no * cell_height))
-            legal_moves = self.get_legal_moves(self.selected)
+            legal_moves = self.get_legal_moves(self.selected,self.board)
             for move_row, move_col in legal_moves:
                 circle_radius = min(cell_width, cell_height) // 10
                 move_marker = pygame.Surface((cell_width, cell_height), pygame.SRCALPHA)
@@ -95,7 +119,7 @@ class Board:
                     score += get_material_value(piece)
         return score
     def move_piece(self,i,f):
-        moving_piece = self.get_piece(i)
+        moving_piece = self.get_piece(i, self.board)
 
         is_en_passant_capture = (
             moving_piece in (1, 7)
@@ -114,9 +138,10 @@ class Board:
             self.en_passant_target = ((i[0] + f[0]) // 2, i[1])
         else:
             self.en_passant_target = None
-    def get_legal_moves(self,cell):
+    def get_legal_moves(self,cell,board,validate_check=True):
+        self.dummy_board = [row[:] for row in board]
         legal_moves = []
-        piece = self.get_piece(cell)
+        piece = self.get_piece(cell, board)
         if piece == 2 or piece == 8:
             knight_offsets = [
                 (-2, -1), (-2, 1), (-1, -2), (-1, 2),
@@ -129,7 +154,7 @@ class Board:
                 if not (0 <= target_row < 8 and 0 <= target_col < 8):
                     continue
 
-                target_piece = self.board[target_row][target_col]
+                target_piece = board[target_row][target_col]
                 if target_piece == 0:
                     legal_moves.append((target_row, target_col))
                     continue
@@ -144,11 +169,11 @@ class Board:
             is_white_piece = 1 <= piece <= 6
 
             one_step_row = cell[0] + direction
-            if 0 <= one_step_row < 8 and self.board[one_step_row][cell[1]] == 0:
+            if 0 <= one_step_row < 8 and board[one_step_row][cell[1]] == 0:
                 legal_moves.append((one_step_row, cell[1]))
 
                 two_step_row = cell[0] + (2 * direction)
-                if cell[0] == start_row and 0 <= two_step_row < 8 and self.board[two_step_row][cell[1]] == 0:
+                if cell[0] == start_row and 0 <= two_step_row < 8 and board[two_step_row][cell[1]] == 0:
                     legal_moves.append((two_step_row, cell[1]))
 
             for col_offset in (-1, 1):
@@ -157,7 +182,7 @@ class Board:
                 if not (0 <= capture_row < 8 and 0 <= capture_col < 8):
                     continue
 
-                target_piece = self.board[capture_row][capture_col]
+                target_piece = board[capture_row][capture_col]
                 if target_piece == 0:
                     if self.en_passant_target == (capture_row, capture_col):
                         legal_moves.append((capture_row, capture_col))
@@ -177,7 +202,7 @@ class Board:
                     if not (0 <= target_row < 8 and 0 <= target_col < 8):
                         break
 
-                    target_piece = self.board[target_row][target_col]
+                    target_piece = board[target_row][target_col]
                     if target_piece == 0:
                         legal_moves.append((target_row, target_col))
                     else:
@@ -196,7 +221,7 @@ class Board:
                     if not (0 <= target_row < 8 and 0 <= target_col < 8):
                         break
 
-                    target_piece = self.board[target_row][target_col]
+                    target_piece = board[target_row][target_col]
                     if target_piece == 0:
                         legal_moves.append((target_row, target_col))
                     else:
@@ -215,7 +240,7 @@ class Board:
                     if not (0 <= target_row < 8 and 0 <= target_col < 8):
                         break
 
-                    target_piece = self.board[target_row][target_col]
+                    target_piece = board[target_row][target_col]
                     if target_piece == 0:
                         legal_moves.append((target_row, target_col))
                     else:
@@ -233,7 +258,7 @@ class Board:
                 if not (0 <= target_row < 8 and 0 <= target_col < 8):
                     continue
 
-                target_piece = self.board[target_row][target_col]
+                target_piece = board[target_row][target_col]
                 if target_piece == 0:
                     legal_moves.append((target_row, target_col))
                 else:
@@ -241,9 +266,18 @@ class Board:
                         legal_moves.append((target_row, target_col))
                     elif not is_white_piece and 1 <= target_piece <= 6:
                         legal_moves.append((target_row, target_col))
-        for move in legal_moves[:]:
-            if self.board[move[0]][move[1]] == 12 or self.board[move[0]][move[1]] == 6:
-                legal_moves.remove(move)
+        if validate_check:
+            for move in legal_moves[:]:
+                if board[move[0]][move[1]] == 12 or board[move[0]][move[1]] == 6:
+                    legal_moves.remove(move)
+        if validate_check:
+            for move in legal_moves[:]:
+                temp_board = [row[:] for row in board]
+                temp_board[move[0]][move[1]] = piece
+                temp_board[cell[0]][cell[1]] = 0
+                if self.is_in_check('white' if piece <= 6 else 'black', temp_board):
+                    legal_moves.remove(move)
+
         return legal_moves
             
 game_board = Board(screen)
@@ -253,20 +287,20 @@ while running:
         if event.type == pygame.QUIT:
             running = False
         if event.type == pygame.MOUSEBUTTONDOWN:
-            if not picked and 0 < game_board.get_piece(get_mouse_cell()) < 7:
+            if not picked and 0 < game_board.get_piece(get_mouse_cell(), game_board.board) < 7:
                 picked = True
                 picked_cell = get_mouse_cell()
                 game_board.selected = picked_cell
             elif picked:
-                if game_board.get_piece(get_mouse_cell()) == 0 and get_mouse_cell() not in game_board.get_legal_moves(picked_cell):
+                if game_board.get_piece(get_mouse_cell(), game_board.board) == 0 and get_mouse_cell() not in game_board.get_legal_moves(picked_cell, game_board.board):
                     picked = False
                     game_board.selected = None
                     picked_cell = None
-                elif get_mouse_cell() not in game_board.get_legal_moves(picked_cell):
+                elif get_mouse_cell() not in game_board.get_legal_moves(picked_cell, game_board.board):
                     picked = False
                     game_board.selected = None
                     picked_cell = None
-                elif get_mouse_cell() != picked_cell and get_mouse_cell() in game_board.get_legal_moves(picked_cell):
+                elif get_mouse_cell() != picked_cell and get_mouse_cell() in game_board.get_legal_moves(picked_cell, game_board.board):
                     picked = False
                     game_board.move_piece(picked_cell,get_mouse_cell())
                     game_board.selected = None
