@@ -186,6 +186,64 @@ class Board:
                         elif not is_white_piece and 1 <= target_piece <= 6:
                             legal_moves.append((target_row, target_col))
                         break
+        if piece == 3 or piece == 9:
+            directions = [(-1, -1), (-1, 1), (1, -1), (1, 1)]
+            is_white_piece = 1 <= piece <= 6
+            for row_dir, col_dir in directions:
+                for step in range(1, 8):
+                    target_row = cell[0] + row_dir * step
+                    target_col = cell[1] + col_dir * step
+                    if not (0 <= target_row < 8 and 0 <= target_col < 8):
+                        break
+
+                    target_piece = self.board[target_row][target_col]
+                    if target_piece == 0:
+                        legal_moves.append((target_row, target_col))
+                    else:
+                        if is_white_piece and target_piece > 6:
+                            legal_moves.append((target_row, target_col))
+                        elif not is_white_piece and 1 <= target_piece <= 6:
+                            legal_moves.append((target_row, target_col))
+                        break
+        if piece == 5 or piece == 11:
+            directions = [(-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (-1, 1), (1, -1), (1, 1)]
+            is_white_piece = 1 <= piece <= 6
+            for row_dir, col_dir in directions:
+                for step in range(1, 8):
+                    target_row = cell[0] + row_dir * step
+                    target_col = cell[1] + col_dir * step
+                    if not (0 <= target_row < 8 and 0 <= target_col < 8):
+                        break
+
+                    target_piece = self.board[target_row][target_col]
+                    if target_piece == 0:
+                        legal_moves.append((target_row, target_col))
+                    else:
+                        if is_white_piece and target_piece > 6:
+                            legal_moves.append((target_row, target_col))
+                        elif not is_white_piece and 1 <= target_piece <= 6:
+                            legal_moves.append((target_row, target_col))
+                        break
+        if piece == 6 or piece == 12:
+            directions = [(-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (-1, 1), (1, -1), (1, 1)]
+            is_white_piece = 1 <= piece <= 6
+            for row_dir, col_dir in directions:
+                target_row = cell[0] + row_dir
+                target_col = cell[1] + col_dir
+                if not (0 <= target_row < 8 and 0 <= target_col < 8):
+                    continue
+
+                target_piece = self.board[target_row][target_col]
+                if target_piece == 0:
+                    legal_moves.append((target_row, target_col))
+                else:
+                    if is_white_piece and target_piece > 6:
+                        legal_moves.append((target_row, target_col))
+                    elif not is_white_piece and 1 <= target_piece <= 6:
+                        legal_moves.append((target_row, target_col))
+        for move in legal_moves[:]:
+            if self.board[move[0]][move[1]] == 12 or self.board[move[0]][move[1]] == 6:
+                legal_moves.remove(move)
         return legal_moves
             
 game_board = Board(screen)
