@@ -167,6 +167,25 @@ class Board:
                     legal_moves.append((capture_row, capture_col))
                 elif not is_white_piece and 1 <= target_piece <= 6:
                     legal_moves.append((capture_row, capture_col))
+        if piece == 4 or piece == 10:
+            directions = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+            is_white_piece = 1 <= piece <= 6
+            for row_dir, col_dir in directions:
+                for step in range(1, 8):
+                    target_row = cell[0] + row_dir * step
+                    target_col = cell[1] + col_dir * step
+                    if not (0 <= target_row < 8 and 0 <= target_col < 8):
+                        break
+
+                    target_piece = self.board[target_row][target_col]
+                    if target_piece == 0:
+                        legal_moves.append((target_row, target_col))
+                    else:
+                        if is_white_piece and target_piece > 6:
+                            legal_moves.append((target_row, target_col))
+                        elif not is_white_piece and 1 <= target_piece <= 6:
+                            legal_moves.append((target_row, target_col))
+                        break
         return legal_moves
             
 game_board = Board(screen)
