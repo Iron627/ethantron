@@ -60,6 +60,13 @@ class Board:
             highlight = pygame.Surface((cell_width, cell_height), pygame.SRCALPHA)
             highlight.fill(HIGHLIGHT)
             self.screen.blit(highlight, (col_no * cell_width, row_no * cell_height))
+        
+        for row_no, row in enumerate(self.board):
+            for col_no, _ in enumerate(row):
+                piece = self.get_piece((row_no, col_no))
+                if piece == 0:
+                    continue
+                screen.blit(piece_imgs[piece],((col_no * cell_width) + 10, (row_no * cell_height) + 10))
         if self.selected is not None:
             row_no = self.selected[0]
             col_no = self.selected[1]
@@ -68,8 +75,6 @@ class Board:
             self.screen.blit(selected_highlight, (col_no * cell_width, row_no * cell_height))
             legal_moves = self.get_legal_moves(self.selected)
             for move_row, move_col in legal_moves:
-                center_x = (move_col * cell_width) + (cell_width // 2)
-                center_y = (move_row * cell_height) + (cell_height // 2)
                 circle_radius = min(cell_width, cell_height) // 10
                 move_marker = pygame.Surface((cell_width, cell_height), pygame.SRCALPHA)
                 pygame.draw.circle(
@@ -79,12 +84,6 @@ class Board:
                     circle_radius
                 )
                 self.screen.blit(move_marker, (move_col * cell_width, move_row * cell_height))
-        for row_no, row in enumerate(self.board):
-            for col_no, _ in enumerate(row):
-                piece = self.get_piece((row_no, col_no))
-                if piece == 0:
-                    continue
-                screen.blit(piece_imgs[piece],((col_no * cell_width) + 10, (row_no * cell_height) + 10))
 
     def eval(self):
         score = 0
