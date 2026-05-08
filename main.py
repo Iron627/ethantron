@@ -132,33 +132,92 @@ class Board:
         )
     def is_in_check(self, color, board):
         king_piece = 6 if color == 'white' else 12
-        king_pos = None
+        king_row = None
+        king_col = None
         for row_no in range(8):
             for col_no in range(8):
                 if board[row_no][col_no] == king_piece:
-                    king_pos = (row_no, col_no)
+                    king_row = row_no
+                    king_col = col_no
                     break
-            if king_pos is not None:
+            if king_row is not None:
                 break
 
-        if king_pos is None:
+        if king_row is None:
             return False
 
-        is_opponent_piece = (lambda p: 7 <= p <= 12) if color == 'white' else (lambda p: 1 <= p <= 6)
-        for row_no in range(8):
-            for col_no in range(8):
-                piece = board[row_no][col_no]
-                if not is_opponent_piece(piece):
-                    continue
-                if piece in (1, 7):
-                    direction = -1 if piece == 1 else 1
-                    for col_offset in (-1, 1):
-                        if (row_no + direction, col_no + col_offset) == king_pos:
-                            return True
-                    continue
-                legal_moves = self.get_legal_moves((row_no, col_no), board, validate_check=False)
-                if king_pos in legal_moves:
+        if color == 'white':
+            pawn_piece = 7
+            knight_piece = 8
+            bishop_piece = 9
+            rook_piece = 10
+            queen_piece = 11
+            enemy_king_piece = 12
+            pawn_row = king_row - 1
+        else:
+            pawn_piece = 1
+            knight_piece = 2
+            bishop_piece = 3
+            rook_piece = 4
+            queen_piece = 5
+            enemy_king_piece = 6
+            pawn_row = king_row + 1
+
+        if 0 <= pawn_row < 8:
+            for col_offset in (-1, 1):
+                pawn_col = king_col + col_offset
+                if 0 <= pawn_col < 8 and board[pawn_row][pawn_col] == pawn_piece:
                     return True
+
+        knight_offsets = [
+            (-2, -1), (-2, 1), (-1, -2), (-1, 2),
+            (1, -2), (1, 2), (2, -1), (2, 1)
+        ]
+        for row_offset, col_offset in knight_offsets:
+            target_row = king_row + row_offset
+            target_col = king_col + col_offset
+            if 0 <= target_row < 8 and 0 <= target_col < 8:
+                if board[target_row][target_col] == knight_piece:
+                    return True
+
+        king_offsets = [
+            (-1, -1), (-1, 0), (-1, 1),
+            (0, -1), (0, 1),
+            (1, -1), (1, 0), (1, 1)
+        ]
+        for row_offset, col_offset in king_offsets:
+            target_row = king_row + row_offset
+            target_col = king_col + col_offset
+            if 0 <= target_row < 8 and 0 <= target_col < 8:
+                if board[target_row][target_col] == enemy_king_piece:
+                    return True
+
+        diagonal_directions = [(-1, -1), (-1, 1), (1, -1), (1, 1)]
+        for row_dir, col_dir in diagonal_directions:
+            target_row = king_row + row_dir
+            target_col = king_col + col_dir
+            while 0 <= target_row < 8 and 0 <= target_col < 8:
+                piece = board[target_row][target_col]
+                if piece != 0:
+                    if piece in (bishop_piece, queen_piece):
+                        return True
+                    break
+                target_row += row_dir
+                target_col += col_dir
+
+        straight_directions = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+        for row_dir, col_dir in straight_directions:
+            target_row = king_row + row_dir
+            target_col = king_col + col_dir
+            while 0 <= target_row < 8 and 0 <= target_col < 8:
+                piece = board[target_row][target_col]
+                if piece != 0:
+                    if piece in (rook_piece, queen_piece):
+                        return True
+                    break
+                target_row += row_dir
+                target_col += col_dir
+
         return False
     def get_piece(self, i,board):
         return board[i[0]][i[1]]
