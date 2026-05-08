@@ -46,6 +46,10 @@ class Board:
         self.selected = None
         self.turn = False
         self.en_passant_target = None
+        self.castling_rights = {
+            'white': {'king_side': True, 'queen_side': True},
+            'black': {'king_side': True, 'queen_side': True},
+        }
         self.result_text = None
     def is_in_check(self, color, board):
         king_piece = 6 if color == 'white' else 12
@@ -165,7 +169,16 @@ class Board:
     def move_on_copy(self, board, move):
         start, end = move
         new_board = [row[:] for row in board]
-        new_board[end[0]][end[1]] = new_board[start[0]][start[1]]
+        moving_piece = new_board[start[0]][start[1]]
+        if moving_piece in (6, 12) and abs(end[1] - start[1]) == 2:
+            row = start[0]
+            if end[1] == 6:
+                new_board[row][5] = new_board[row][7]
+                new_board[row][7] = 0
+            elif end[1] == 2:
+                new_board[row][3] = new_board[row][0]
+                new_board[row][0] = 0
+        new_board[end[0]][end[1]] = moving_piece
         new_board[start[0]][start[1]] = 0
         return new_board
 
@@ -217,6 +230,7 @@ class Board:
 
     def move_piece(self,i,f):
         moving_piece = self.get_piece(i, self.board)
+        captured_piece = self.get_piece(f, self.board)
 
         is_en_passant_capture = (
             moving_piece in (1, 7)
@@ -228,13 +242,88 @@ class Board:
         if is_en_passant_capture:
             self.board[i[0]][f[1]] = 0
 
+        if moving_piece in (6, 12) and abs(f[1] - i[1]) == 2:
+            row = i[0]
+            if f[1] == 6:
+                self.board[row][5] = self.board[row][7]
+                self.board[row][7] = 0
+            elif f[1] == 2:
+                self.board[row][3] = self.board[row][0]
+                self.board[row][0] = 0
+
         self.board[f[0]][f[1]] = moving_piece
         self.board[i[0]][i[1]] = 0
+
+        self.update_castling_rights(i, f, moving_piece, captured_piece)
 
         if moving_piece in (1, 7) and abs(f[0] - i[0]) == 2:
             self.en_passant_target = ((i[0] + f[0]) // 2, i[1])
         else:
             self.en_passant_target = None
+
+    def update_castling_rights(self, start, end, moving_piece, captured_piece):
+        if moving_piece == 6:
+            self.castling_rights['white']['king_side'] = False
+            self.castling_rights['white']['queen_side'] = False
+        elif moving_piece == 12:
+            self.castling_rights['black']['king_side'] = False
+            self.castling_rights['black']['queen_side'] = False
+        elif moving_piece == 4:
+            if start == (7, 0):
+                self.castling_rights['white']['queen_side'] = False
+            elif start == (7, 7):
+                self.castling_rights['white']['king_side'] = False
+        elif moving_piece == 10:
+            if start == (0, 0):
+                self.castling_rights['black']['queen_side'] = False
+            elif start == (0, 7):
+                self.castling_rights['black']['king_side'] = False
+
+        if captured_piece == 4:
+            if end == (7, 0):
+                self.castling_rights['white']['queen_side'] = False
+            elif end == (7, 7):
+                self.castling_rights['white']['king_side'] = False
+        elif captured_piece == 10:
+            if end == (0, 0):
+                self.castling_rights['black']['queen_side'] = False
+            elif end == (0, 7):
+                self.castling_rights['black']['king_side'] = False
+
+    def can_castle(self, color, side, board):
+        row = 7 if color == 'white' else 0
+        king_piece = 6 if color == 'white' else 12
+        rook_piece = 4 if color == 'white' else 10
+
+        if not self.castling_rights[color][side]:
+            return False
+        if board[row][4] != king_piece:
+            return False
+        if self.is_in_check(color, board):
+            return False
+
+        if side == 'king_side':
+            rook_col = 7
+            empty_cols = (5, 6)
+            king_path_cols = (5, 6)
+        else:
+            rook_col = 0
+            empty_cols = (1, 2, 3)
+            king_path_cols = (3, 2)
+
+        if board[row][rook_col] != rook_piece:
+            return False
+        for col in empty_cols:
+            if board[row][col] != 0:
+                return False
+        for col in king_path_cols:
+            temp_board = [board_row[:] for board_row in board]
+            temp_board[row][4] = 0
+            temp_board[row][col] = king_piece
+            if self.is_in_check(color, temp_board):
+                return False
+
+        return True
     def get_legal_moves(self,cell,board,validate_check=True):
         self.dummy_board = [row[:] for row in board]
         legal_moves = []
@@ -363,6 +452,12 @@ class Board:
                         legal_moves.append((target_row, target_col))
                     elif not is_white_piece and 1 <= target_piece <= 6:
                         legal_moves.append((target_row, target_col))
+            if validate_check and cell == ((7, 4) if is_white_piece else (0, 4)):
+                color = 'white' if is_white_piece else 'black'
+                if self.can_castle(color, 'king_side', board):
+                    legal_moves.append((cell[0], 6))
+                if self.can_castle(color, 'queen_side', board):
+                    legal_moves.append((cell[0], 2))
         if validate_check:
             for move in legal_moves[:]:
                 if board[move[0]][move[1]] == 12 or board[move[0]][move[1]] == 6:
@@ -370,8 +465,7 @@ class Board:
         if validate_check:
             for move in legal_moves[:]:
                 temp_board = [row[:] for row in board]
-                temp_board[move[0]][move[1]] = piece
-                temp_board[cell[0]][cell[1]] = 0
+                temp_board = self.move_on_copy(temp_board, (cell, move))
                 if self.is_in_check('white' if piece <= 6 else 'black', temp_board):
                     legal_moves.remove(move)
 
