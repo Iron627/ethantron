@@ -262,6 +262,10 @@ while running:
                     picked = False
                     game_board.selected = None
                     picked_cell = None
+                elif get_mouse_cell() not in game_board.get_legal_moves(picked_cell):
+                    picked = False
+                    game_board.selected = None
+                    picked_cell = None
                 elif get_mouse_cell() != picked_cell and get_mouse_cell() in game_board.get_legal_moves(picked_cell):
                     picked = False
                     game_board.move_piece(picked_cell,get_mouse_cell())
