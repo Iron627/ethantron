@@ -258,10 +258,21 @@ class Board:
 
         score = 0
         eval_table = EVAL_TABLE
+        white_bishops = 0
+        black_bishops = 0
         for row_no in range(8):
             row = board[row_no]
             for col_no in range(8):
+                piece = row[col_no]
                 score += eval_table[row[col_no]][row_no][col_no]
+                if piece == 3:
+                    white_bishops += 1
+                elif piece == 9:
+                    black_bishops += 1
+        if white_bishops >= 2:
+            score -= 30
+        if black_bishops >= 2:
+            score += 30
         return score
 
     def get_all_moves(self, board, black_turn):
