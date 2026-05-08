@@ -42,6 +42,7 @@ class Board:
         ]
         self.hovered = None
         self.selected = None
+        self.turn = False
     def get_piece(self, i):
         return self.board[i[0]][i[1]]
     def draw(self):
@@ -64,6 +65,19 @@ class Board:
             selected_highlight = pygame.Surface((cell_width, cell_height), pygame.SRCALPHA)
             selected_highlight.fill(SELECTED_HIGHLIGHT)
             self.screen.blit(selected_highlight, (col_no * cell_width, row_no * cell_height))
+            legal_moves = self.get_legal_moves(self.selected)
+            for move_row, move_col in legal_moves:
+                center_x = (move_col * cell_width) + (cell_width // 2)
+                center_y = (move_row * cell_height) + (cell_height // 2)
+                circle_radius = min(cell_width, cell_height) // 10
+                move_marker = pygame.Surface((cell_width, cell_height), pygame.SRCALPHA)
+                pygame.draw.circle(
+                    move_marker,
+                    (120, 120, 120, 140),
+                    (cell_width // 2, cell_height // 2),
+                    circle_radius
+                )
+                self.screen.blit(move_marker, (move_col * cell_width, move_row * cell_height))
         for row_no, row in enumerate(self.board):
             for col_no, _ in enumerate(row):
                 piece = self.get_piece((row_no, col_no))
@@ -83,7 +97,32 @@ class Board:
     def move_piece(self,i,f):
         self.board[f[0]][f[1]] = self.get_piece(i)
         self.board[i[0]][i[1]] = 0
+    def get_legal_moves(self,cell):
+        legal_moves = []
+        piece = self.get_piece(cell)
+        if piece == 2 or piece == 8:
+            knight_offsets = [
+                (-2, -1), (-2, 1), (-1, -2), (-1, 2),
+                (1, -2), (1, 2), (2, -1), (2, 1)
+            ]
+            is_white_piece = 1 <= piece <= 6
+            for row_offset, col_offset in knight_offsets:
+                target_row = cell[0] + row_offset
+                target_col = cell[1] + col_offset
+                if not (0 <= target_row < 8 and 0 <= target_col < 8):
+                    continue
 
+                target_piece = self.board[target_row][target_col]
+                if target_piece == 0:
+                    legal_moves.append((target_row, target_col))
+                    continue
+
+                if is_white_piece and target_piece > 6:
+                    legal_moves.append((target_row, target_col))
+                elif not is_white_piece and 1 <= target_piece <= 6:
+                    legal_moves.append((target_row, target_col))
+        return legal_moves
+            
 game_board = Board(screen)
 picked = False
 while running:
@@ -91,14 +130,19 @@ while running:
         if event.type == pygame.QUIT:
             running = False
         if event.type == pygame.MOUSEBUTTONDOWN:
-            if not picked and game_board.get_piece(get_mouse_cell()):
+            if not picked and 0 < game_board.get_piece(get_mouse_cell()) < 7:
                 picked = True
                 picked_cell = get_mouse_cell()
                 game_board.selected = picked_cell
             elif picked:
-                picked = False
-                game_board.move_piece(picked_cell,get_mouse_cell())
-                game_board.selected = None
+                if game_board.get_piece(get_mouse_cell()) == 0 and get_mouse_cell() not in game_board.get_legal_moves(picked_cell):
+                    picked = False
+                    game_board.selected = None
+                    picked_cell = None
+                elif get_mouse_cell() != picked_cell and get_mouse_cell() in game_board.get_legal_moves(picked_cell):
+                    picked = False
+                    game_board.move_piece(picked_cell,get_mouse_cell())
+                    game_board.selected = None
 
 
     if get_mouse_cell():
