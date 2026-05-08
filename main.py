@@ -4,6 +4,7 @@ SCREEN_HEIGHT,SCREEN_WIDTH = 1024,1024
 screen = pygame.display.set_mode((SCREEN_WIDTH,SCREEN_HEIGHT))
 running = True
 clock = pygame.time.Clock()
+font = pygame.font.Font(None, 96)
 WHITE = "#c2c2c2"
 BLACK = "#2a4537"
 HIGHLIGHT = (255, 210, 84,50)
@@ -11,6 +12,7 @@ SELECTED_HIGHLIGHT = (80, 170, 255, 90)
 # Piece Map: 0: empty space, 1: Pawn, 2: Knight, 3: Bishop, 4: Rook, 5: Queen, 6: King
 #            7: Black Pawn, 8: Black Knight, 9: Black Bishop, 10: Black Rook, 11: Black Queen, 12: Black King
 material_values = {0:0,1:1,2:3,3:3,4:5,5:9,6:0}
+AI_DEPTH = 2
 piece_imgs = {}
 for piece in range(1,13):
     piece_imgs[piece] = pygame.transform.scale(pygame.image.load(f'assets/{piece}.png').convert_alpha(), (100,100))
@@ -44,6 +46,7 @@ class Board:
         self.selected = None
         self.turn = False
         self.en_passant_target = None
+        self.result_text = None
     def is_in_check(self, color, board):
         king_piece = 6 if color == 'white' else 12
         king_pos = None
@@ -63,6 +66,12 @@ class Board:
             for col_no in range(8):
                 piece = board[row_no][col_no]
                 if not is_opponent_piece(piece):
+                    continue
+                if piece in (1, 7):
+                    direction = -1 if piece == 1 else 1
+                    for col_offset in (-1, 1):
+                        if (row_no + direction, col_no + col_offset) == king_pos:
+                            return True
                     continue
                 legal_moves = self.get_legal_moves((row_no, col_no), board, validate_check=False)
                 if king_pos in legal_moves:
@@ -108,16 +117,104 @@ class Board:
                     circle_radius
                 )
                 self.screen.blit(move_marker, (move_col * cell_width, move_row * cell_height))
+        if self.result_text is not None:
+            text = font.render(self.result_text, True, "white")
+            text_rect = text.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2))
+            pygame.draw.rect(self.screen, "black", text_rect.inflate(40, 30))
+            self.screen.blit(text, text_rect)
 
-    def eval(self):
+    def eval(self, board=None):
+        if board is None:
+            board = self.board
+
         score = 0
-        for row in self.board:
+        for row in board:
             for piece in row:
                 if 1 <= piece <= 6:
                     score -= get_material_value(piece)
                 elif piece != 0 and piece > 6:
                     score += get_material_value(piece)
         return score
+
+    def get_all_moves(self, board, black_turn):
+        moves = []
+        for row_no, row in enumerate(board):
+            for col_no, piece in enumerate(row):
+                if black_turn and 7 <= piece <= 12:
+                    start = (row_no, col_no)
+                elif not black_turn and 1 <= piece <= 6:
+                    start = (row_no, col_no)
+                else:
+                    continue
+
+                for end in self.get_legal_moves(start, board):
+                    moves.append((start, end))
+        return moves
+
+    def check_game_over(self, black_turn):
+        if self.get_all_moves(self.board, black_turn):
+            return False
+
+        color = 'black' if black_turn else 'white'
+        if self.is_in_check(color, self.board):
+            self.result_text = 'White wins' if black_turn else 'Black wins'
+        else:
+            self.result_text = 'Stalemate'
+        return True
+
+    def move_on_copy(self, board, move):
+        start, end = move
+        new_board = [row[:] for row in board]
+        new_board[end[0]][end[1]] = new_board[start[0]][start[1]]
+        new_board[start[0]][start[1]] = 0
+        return new_board
+
+    def minimax(self, board, depth, alpha, beta, maximizing):
+        if depth == 0:
+            return self.eval(board)
+
+        moves = self.get_all_moves(board, maximizing)
+        if not moves:
+            return self.eval(board)
+
+        if maximizing:
+            best = float('-inf')
+            for move in moves:
+                score = self.minimax(self.move_on_copy(board, move), depth - 1, alpha, beta, False)
+                best = max(best, score)
+                alpha = max(alpha, best)
+                if beta <= alpha:
+                    break
+            return best
+
+        best = float('inf')
+        for move in moves:
+            score = self.minimax(self.move_on_copy(board, move), depth - 1, alpha, beta, True)
+            best = min(best, score)
+            beta = min(beta, best)
+            if beta <= alpha:
+                break
+        return best
+
+    def get_best_move(self, depth=AI_DEPTH):
+        best_move = None
+        best_score = float('-inf')
+
+        for move in self.get_all_moves(self.board, True):
+            board_after_move = self.move_on_copy(self.board, move)
+            score = self.minimax(board_after_move, depth - 1, float('-inf'), float('inf'), False)
+            if score > best_score:
+                best_score = score
+                best_move = move
+
+        return best_move
+
+    def ai_move(self):
+        move = self.get_best_move()
+        if move is not None:
+            self.move_piece(move[0], move[1])
+            self.turn = not self.turn
+
     def move_piece(self,i,f):
         moving_piece = self.get_piece(i, self.board)
 
@@ -286,7 +383,7 @@ while running:
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             running = False
-        if event.type == pygame.MOUSEBUTTONDOWN:
+        if event.type == pygame.MOUSEBUTTONDOWN and game_board.result_text is None:
             if not game_board.turn:
                 if not picked and 0 < game_board.get_piece(get_mouse_cell(), game_board.board) < 7:
                     picked = True
@@ -306,6 +403,11 @@ while running:
                         game_board.move_piece(picked_cell,get_mouse_cell())
                         game_board.selected = None
                         game_board.turn = not game_board.turn
+
+    if game_board.turn and game_board.result_text is None:
+        if not game_board.check_game_over(True):
+            game_board.ai_move()
+            game_board.check_game_over(False)
 
     if get_mouse_cell():
         game_board.hovered = get_mouse_cell()
