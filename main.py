@@ -13,7 +13,55 @@ HIGHLIGHT = (255, 210, 84,50)
 SELECTED_HIGHLIGHT = (80, 170, 255, 90)
 # Piece Map: 0: empty space, 1: Pawn, 2: Knight, 3: Bishop, 4: Rook, 5: Queen, 6: King
 #            7: Black Pawn, 8: Black Knight, 9: Black Bishop, 10: Black Rook, 11: Black Queen, 12: Black King
-material_values = {0:0,1:1,2:3,3:3,4:5,5:9,6:0}
+material_values = {0: 0, 1: 100, 2: 320, 3: 330, 4: 500, 5: 900, 6: 0}
+piece_square_tables = {1: [[0, 0, 0, 0, 0, 0, 0, 0],
+     [50, 50, 50, 50, 50, 50, 50, 50],
+     [10, 10, 20, 30, 30, 20, 10, 10],
+     [5, 5, 10, 25, 25, 10, 5, 5],
+     [0, 0, 0, 20, 20, 0, 0, 0],
+     [5, -5, -10, 0, 0, -10, -5, 5],
+     [5, 10, 10, -20, -20, 10, 10, 5],
+     [0, 0, 0, 0, 0, 0, 0, 0]],
+ 2: [[-50, -40, -30, -30, -30, -30, -40, -50],
+     [-40, -20, 0, 5, 5, 0, -20, -40],
+     [-30, 5, 10, 15, 15, 10, 5, -30],
+     [-30, 0, 15, 20, 20, 15, 0, -30],
+     [-30, 5, 15, 20, 20, 15, 5, -30],
+     [-30, 0, 10, 15, 15, 10, 0, -30],
+     [-40, -20, 0, 0, 0, 0, -20, -40],
+     [-50, -40, -30, -30, -30, -30, -40, -50]],
+ 3: [[-20, -10, -10, -10, -10, -10, -10, -20],
+     [-10, 5, 0, 0, 0, 0, 5, -10],
+     [-10, 10, 10, 10, 10, 10, 10, -10],
+     [-10, 0, 10, 10, 10, 10, 0, -10],
+     [-10, 5, 5, 10, 10, 5, 5, -10],
+     [-10, 0, 5, 10, 10, 5, 0, -10],
+     [-10, 0, 0, 0, 0, 0, 0, -10],
+     [-20, -10, -10, -10, -10, -10, -10, -20]],
+ 4: [[0, 0, 0, 5, 5, 0, 0, 0],
+     [-5, 0, 0, 0, 0, 0, 0, -5],
+     [-5, 0, 0, 0, 0, 0, 0, -5],
+     [-5, 0, 0, 0, 0, 0, 0, -5],
+     [-5, 0, 0, 0, 0, 0, 0, -5],
+     [-5, 0, 0, 0, 0, 0, 0, -5],
+     [5, 10, 10, 10, 10, 10, 10, 5],
+     [0, 0, 0, 0, 0, 0, 0, 0]],
+ 5: [[-20, -10, -10, -5, -5, -10, -10, -20],
+     [-10, 0, 0, 0, 0, 0, 0, -10],
+     [-10, 0, 5, 5, 5, 5, 0, -10],
+     [-5, 0, 5, 5, 5, 5, 0, -5],
+     [0, 0, 5, 5, 5, 5, 0, -5],
+     [-10, 5, 5, 5, 5, 5, 0, -10],
+     [-10, 0, 5, 0, 0, 0, 0, -10],
+     [-20, -10, -10, -5, -5, -10, -10, -20]],
+ 6: [[-30, -40, -40, -50, -50, -40, -40, -30],
+     [-30, -40, -40, -50, -50, -40, -40, -30],
+     [-30, -40, -40, -50, -50, -40, -40, -30],
+     [-30, -40, -40, -50, -50, -40, -40, -30],
+     [-20, -30, -30, -40, -40, -30, -30, -20],
+     [-10, -20, -20, -20, -20, -20, -20, -10],
+     [20, 20, 0, 0, 0, 0, 20, 20],
+     [20, 30, 10, 0, 0, 10, 30, 20]]}
 AI_DEPTH = 4
 ai_executor = ThreadPoolExecutor(max_workers=1)
 ai_future = None
@@ -24,6 +72,19 @@ def get_material_value(piece):
     if piece > 6:
         piece -= 6
     return material_values[piece]
+
+def get_piece_square_value(piece, row, col):
+    base_piece = piece - 6 if piece > 6 else piece
+    table_row = 7 - row if piece > 6 else row
+    return piece_square_tables[base_piece][table_row][col]
+EVAL_TABLE = [[[0 for _ in range(8)] for _ in range(8)] for _ in range(13)]
+for piece in range(1, 13):
+    base_piece = piece - 6 if piece > 6 else piece
+    for row in range(8):
+        for col in range(8):
+            pst_row = 7 - row if piece > 6 else row
+            value = material_values[base_piece] + piece_square_tables[base_piece][pst_row][col]
+            EVAL_TABLE[piece][row][col] = value if piece > 6 else -value
 
 def get_mouse_cell():
     x, y = pygame.mouse.get_pos()
@@ -137,12 +198,11 @@ class Board:
             board = self.board
 
         score = 0
-        for row in board:
-            for piece in row:
-                if 1 <= piece <= 6:
-                    score -= get_material_value(piece)
-                elif piece != 0 and piece > 6:
-                    score += get_material_value(piece)
+        eval_table = EVAL_TABLE
+        for row_no in range(8):
+            row = board[row_no]
+            for col_no in range(8):
+                score += eval_table[row[col_no]][row_no][col_no]
         return score
 
     def get_all_moves(self, board, black_turn):
@@ -227,8 +287,8 @@ class Board:
             score -= get_material_value(moving_piece)
 
         if end in ((3, 3), (3, 4), (4, 3), (4, 4)):
-            score += 1
-
+            score += 10
+        
         return score
 
     def get_best_move(self, depth=AI_DEPTH):
@@ -349,7 +409,6 @@ class Board:
 
         return True
     def get_legal_moves(self,cell,board,validate_check=True):
-        self.dummy_board = [row[:] for row in board]
         legal_moves = []
         piece = self.get_piece(cell, board)
         if piece == 2 or piece == 8:
@@ -483,15 +542,17 @@ class Board:
                 if self.can_castle(color, 'queen_side', board):
                     legal_moves.append((cell[0], 2))
         if validate_check:
-            for move in legal_moves[:]:
-                if board[move[0]][move[1]] == 12 or board[move[0]][move[1]] == 6:
-                    legal_moves.remove(move)
-        if validate_check:
-            for move in legal_moves[:]:
-                temp_board = [row[:] for row in board]
-                temp_board = self.move_on_copy(temp_board, (cell, move))
-                if self.is_in_check('white' if piece <= 6 else 'black', temp_board):
-                    legal_moves.remove(move)
+            color = 'white' if piece <= 6 else 'black'
+            filtered_moves = []
+            for move in legal_moves:
+                target_piece = board[move[0]][move[1]]
+                if target_piece in (6, 12):
+                    continue
+
+                temp_board = self.move_on_copy(board, (cell, move))
+                if not self.is_in_check(color, temp_board):
+                    filtered_moves.append(move)
+            legal_moves = filtered_moves
 
         return legal_moves
             
