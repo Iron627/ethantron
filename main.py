@@ -43,6 +43,7 @@ class Board:
         self.hovered = None
         self.selected = None
         self.turn = False
+        self.en_passant_target = None
     def get_piece(self, i):
         return self.board[i[0]][i[1]]
     def draw(self):
@@ -95,8 +96,25 @@ class Board:
                     score += get_material_value(piece)
         return score
     def move_piece(self,i,f):
-        self.board[f[0]][f[1]] = self.get_piece(i)
+        moving_piece = self.get_piece(i)
+
+        is_en_passant_capture = (
+            moving_piece in (1, 7)
+            and self.en_passant_target == f
+            and i[1] != f[1]
+            and self.board[f[0]][f[1]] == 0
+        )
+
+        if is_en_passant_capture:
+            self.board[i[0]][f[1]] = 0
+
+        self.board[f[0]][f[1]] = moving_piece
         self.board[i[0]][i[1]] = 0
+
+        if moving_piece in (1, 7) and abs(f[0] - i[0]) == 2:
+            self.en_passant_target = ((i[0] + f[0]) // 2, i[1])
+        else:
+            self.en_passant_target = None
     def get_legal_moves(self,cell):
         legal_moves = []
         piece = self.get_piece(cell)
@@ -121,6 +139,35 @@ class Board:
                     legal_moves.append((target_row, target_col))
                 elif not is_white_piece and 1 <= target_piece <= 6:
                     legal_moves.append((target_row, target_col))
+        if piece == 1 or piece == 7:
+            direction = -1 if piece == 1 else 1
+            start_row = 6 if piece == 1 else 1
+            is_white_piece = 1 <= piece <= 6
+
+            one_step_row = cell[0] + direction
+            if 0 <= one_step_row < 8 and self.board[one_step_row][cell[1]] == 0:
+                legal_moves.append((one_step_row, cell[1]))
+
+                two_step_row = cell[0] + (2 * direction)
+                if cell[0] == start_row and 0 <= two_step_row < 8 and self.board[two_step_row][cell[1]] == 0:
+                    legal_moves.append((two_step_row, cell[1]))
+
+            for col_offset in (-1, 1):
+                capture_row = cell[0] + direction
+                capture_col = cell[1] + col_offset
+                if not (0 <= capture_row < 8 and 0 <= capture_col < 8):
+                    continue
+
+                target_piece = self.board[capture_row][capture_col]
+                if target_piece == 0:
+                    if self.en_passant_target == (capture_row, capture_col):
+                        legal_moves.append((capture_row, capture_col))
+                    continue
+
+                if is_white_piece and target_piece > 6:
+                    legal_moves.append((capture_row, capture_col))
+                elif not is_white_piece and 1 <= target_piece <= 6:
+                    legal_moves.append((capture_row, capture_col))
         return legal_moves
             
 game_board = Board(screen)
