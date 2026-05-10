@@ -1,6 +1,8 @@
 import pygame
 import copy
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+import sys
 import time
 pygame.init()
 SCREEN_HEIGHT,SCREEN_WIDTH = 1024,1024
@@ -66,8 +68,13 @@ AI_DEPTH = 4
 ai_executor = ThreadPoolExecutor(max_workers=1)
 ai_future = None
 piece_imgs = {}
+
+def resource_path(relative_path):
+    base_path = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+    return str(base_path / relative_path)
+
 for piece in range(1,13):
-    piece_imgs[piece] = pygame.transform.scale(pygame.image.load(f'assets/{piece}.png').convert_alpha(), (100,100))
+    piece_imgs[piece] = pygame.transform.scale(pygame.image.load(resource_path(f'assets/{piece}.png')).convert_alpha(), (100,100))
 def get_material_value(piece):
     if piece > 6:
         piece -= 6
