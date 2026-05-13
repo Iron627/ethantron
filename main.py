@@ -65,6 +65,8 @@ piece_square_tables = {1: [[0, 0, 0, 0, 0, 0, 0, 0],
      [20, 20, 0, 0, 0, 0, 20, 20],
      [20, 30, 10, 0, 0, 10, 30, 20]]}
 AI_DEPTH = 4
+MATE_SCORE = 1000000
+USE_BOARD_STATE = object()
 ai_executor = ThreadPoolExecutor(max_workers=1)
 ai_future = None
 piece_imgs = {}
@@ -84,6 +86,43 @@ def get_piece_square_value(piece, row, col):
     base_piece = piece - 6 if piece > 6 else piece
     table_row = 7 - row if piece > 6 else row
     return piece_square_tables[base_piece][table_row][col]
+
+def promote_piece_if_needed(piece, row, promotion_choice="queen"):
+    white_promotions = {"queen": 5, "knight": 2}
+    black_promotions = {"queen": 11, "knight": 8}
+    if promotion_choice not in white_promotions:
+        promotion_choice = "queen"
+
+    if piece == 1 and row == 0:
+        return white_promotions[promotion_choice]
+    if piece == 7 and row == 7:
+        return black_promotions[promotion_choice]
+    return piece
+
+def normalize_move(move):
+    if len(move) == 2:
+        start, end = move
+        return start, end, None
+    start, end, promotion_choice = move
+    return start, end, promotion_choice
+
+def get_promotion_choices(piece, row):
+    if (piece == 1 and row == 0) or (piece == 7 and row == 7):
+        return ("queen", "knight")
+    return (None,)
+
+def copy_castling_rights(castling_rights):
+    return {
+        'white': {
+            'king_side': castling_rights['white']['king_side'],
+            'queen_side': castling_rights['white']['queen_side'],
+        },
+        'black': {
+            'king_side': castling_rights['black']['king_side'],
+            'queen_side': castling_rights['black']['queen_side'],
+        },
+    }
+
 EVAL_TABLE = [[[0 for _ in range(8)] for _ in range(8)] for _ in range(13)]
 for piece in range(1, 13):
     base_piece = piece - 6 if piece > 6 else piece
@@ -117,6 +156,7 @@ class Board:
         self.hovered = None
         self.selected = None
         self.selected_legal_moves = []
+        self.pending_promotion = None
         self.turn = False
         self.en_passant_target = None
         self.castling_rights = {
@@ -258,6 +298,11 @@ class Board:
             text_rect = text.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2))
             pygame.draw.rect(self.screen, "black", text_rect.inflate(40, 30))
             self.screen.blit(text, text_rect)
+        elif self.pending_promotion is not None:
+            text = font.render("Q: Queen  N: Knight", True, "white")
+            text_rect = text.get_rect(center=(SCREEN_WIDTH // 2, SCREEN_HEIGHT // 2))
+            pygame.draw.rect(self.screen, "black", text_rect.inflate(40, 30))
+            self.screen.blit(text, text_rect)
 
     def eval(self, board=None):
         if board is None:
@@ -282,7 +327,7 @@ class Board:
             score += 30
         return score
 
-    def get_all_moves(self, board, black_turn):
+    def get_all_moves(self, board, black_turn, en_passant_target=USE_BOARD_STATE, castling_rights=None):
         moves = []
         for row_no, row in enumerate(board):
             for col_no, piece in enumerate(row):
@@ -293,8 +338,12 @@ class Board:
                 else:
                     continue
 
-                for end in self.get_legal_moves(start, board):
-                    moves.append((start, end))
+                for end in self.get_legal_moves(start, board, True, en_passant_target, castling_rights):
+                    for promotion_choice in get_promotion_choices(piece, end[0]):
+                        if promotion_choice is None:
+                            moves.append((start, end))
+                        else:
+                            moves.append((start, end, promotion_choice))
         return moves
 
     def check_game_over(self, black_turn):
@@ -308,10 +357,33 @@ class Board:
             self.result_text = 'Stalemate'
         return True
 
-    def move_on_copy(self, board, move):
-        start, end = move
+    def apply_move_to_copy(
+        self,
+        board,
+        move,
+        en_passant_target=USE_BOARD_STATE,
+        castling_rights=None,
+    ):
+        start, end, promotion_choice = normalize_move(move)
+        if en_passant_target is USE_BOARD_STATE:
+            en_passant_target = self.en_passant_target
+        new_castling_rights = copy_castling_rights(
+            self.castling_rights if castling_rights is None else castling_rights
+        )
         new_board = [row[:] for row in board]
         moving_piece = new_board[start[0]][start[1]]
+        captured_piece = new_board[end[0]][end[1]]
+
+        is_en_passant_capture = (
+            moving_piece in (1, 7)
+            and en_passant_target == end
+            and start[1] != end[1]
+            and new_board[end[0]][end[1]] == 0
+        )
+        if is_en_passant_capture:
+            captured_piece = new_board[start[0]][end[1]]
+            new_board[start[0]][end[1]] = 0
+
         if moving_piece in (6, 12) and abs(end[1] - start[1]) == 2:
             row = start[0]
             if end[1] == 6:
@@ -320,24 +392,87 @@ class Board:
             elif end[1] == 2:
                 new_board[row][3] = new_board[row][0]
                 new_board[row][0] = 0
-        new_board[end[0]][end[1]] = moving_piece
+        new_board[end[0]][end[1]] = promote_piece_if_needed(
+            moving_piece,
+            end[0],
+            promotion_choice or "queen",
+        )
         new_board[start[0]][start[1]] = 0
+
+        self.update_castling_rights_for(
+            new_castling_rights,
+            start,
+            end,
+            moving_piece,
+            captured_piece,
+        )
+
+        if moving_piece in (1, 7) and abs(end[0] - start[0]) == 2:
+            new_en_passant_target = ((start[0] + end[0]) // 2, start[1])
+        else:
+            new_en_passant_target = None
+
+        return new_board, new_en_passant_target, new_castling_rights
+
+    def move_on_copy(
+        self,
+        board,
+        move,
+        en_passant_target=USE_BOARD_STATE,
+        castling_rights=None,
+    ):
+        new_board, _, _ = self.apply_move_to_copy(
+            board,
+            move,
+            en_passant_target,
+            castling_rights,
+        )
         return new_board
 
-    def minimax(self, board, depth, alpha, beta, maximizing):
+    def minimax(
+        self,
+        board,
+        depth,
+        alpha,
+        beta,
+        maximizing,
+        en_passant_target=USE_BOARD_STATE,
+        castling_rights=None,
+    ):
+        if en_passant_target is USE_BOARD_STATE:
+            en_passant_target = self.en_passant_target
+        if castling_rights is None:
+            castling_rights = self.castling_rights
         if depth == 0:
             return self.eval(board)
 
-        moves = self.get_all_moves(board, maximizing)
+        moves = self.get_all_moves(board, maximizing, en_passant_target, castling_rights)
         if not moves:
-            return self.eval(board)
+            color = 'black' if maximizing else 'white'
+            if self.is_in_check(color, board):
+                return -MATE_SCORE if maximizing else MATE_SCORE
+            return 0
 
         moves.sort(key=lambda move: self.score_move(board, move), reverse=True)
 
         if maximizing:
             best = float('-inf')
             for move in moves:
-                score = self.minimax(self.move_on_copy(board, move), depth - 1, alpha, beta, False)
+                next_board, next_en_passant, next_castling = self.apply_move_to_copy(
+                    board,
+                    move,
+                    en_passant_target,
+                    castling_rights,
+                )
+                score = self.minimax(
+                    next_board,
+                    depth - 1,
+                    alpha,
+                    beta,
+                    False,
+                    next_en_passant,
+                    next_castling,
+                )
                 best = max(best, score)
                 alpha = max(alpha, best)
                 if beta <= alpha:
@@ -346,7 +481,21 @@ class Board:
 
         best = float('inf')
         for move in moves:
-            score = self.minimax(self.move_on_copy(board, move), depth - 1, alpha, beta, True)
+            next_board, next_en_passant, next_castling = self.apply_move_to_copy(
+                board,
+                move,
+                en_passant_target,
+                castling_rights,
+            )
+            score = self.minimax(
+                next_board,
+                depth - 1,
+                alpha,
+                beta,
+                True,
+                next_en_passant,
+                next_castling,
+            )
             best = min(best, score)
             beta = min(beta, best)
             if beta <= alpha:
@@ -354,7 +503,7 @@ class Board:
         return best
 
     def score_move(self, board, move):
-        start, end = move
+        start, end, promotion_choice = normalize_move(move)
         moving_piece = board[start[0]][start[1]]
         captured_piece = board[end[0]][end[1]]
         score = 0
@@ -362,6 +511,11 @@ class Board:
         if captured_piece != 0:
             score += 10 * get_material_value(captured_piece)
             score -= get_material_value(moving_piece)
+
+        if promotion_choice == "queen":
+            score += get_material_value(5)
+        elif promotion_choice == "knight":
+            score += get_material_value(2)
 
         if end in ((3, 3), (3, 4), (4, 3), (4, 4)):
             score += 10
@@ -371,12 +525,25 @@ class Board:
     def get_best_move(self, depth=AI_DEPTH):
         best_move = None
         best_score = float('-inf')
-        moves = self.get_all_moves(self.board, True)
+        moves = self.get_all_moves(self.board, True, self.en_passant_target, self.castling_rights)
         moves.sort(key=lambda move: self.score_move(self.board, move), reverse=True)
 
         for move in moves:
-            board_after_move = self.move_on_copy(self.board, move)
-            score = self.minimax(board_after_move, depth - 1, float('-inf'), float('inf'), False)
+            board_after_move, en_passant_after_move, castling_after_move = self.apply_move_to_copy(
+                self.board,
+                move,
+                self.en_passant_target,
+                self.castling_rights,
+            )
+            score = self.minimax(
+                board_after_move,
+                depth - 1,
+                float('-inf'),
+                float('inf'),
+                False,
+                en_passant_after_move,
+                castling_after_move,
+            )
             if score > best_score:
                 best_score = score
                 best_move = move
@@ -386,10 +553,15 @@ class Board:
     def ai_move(self):
         move = self.get_best_move()
         if move is not None:
-            self.move_piece(move[0], move[1])
+            start, end, promotion_choice = normalize_move(move)
+            self.move_piece(start, end, promotion_choice or "queen")
             self.turn = not self.turn
 
-    def move_piece(self,i,f):
+    def is_promotion_move(self, start, end):
+        moving_piece = self.get_piece(start, self.board)
+        return (moving_piece == 1 and end[0] == 0) or (moving_piece == 7 and end[0] == 7)
+
+    def move_piece(self,i,f,promotion_choice="queen"):
         moving_piece = self.get_piece(i, self.board)
         captured_piece = self.get_piece(f, self.board)
 
@@ -412,7 +584,7 @@ class Board:
                 self.board[row][3] = self.board[row][0]
                 self.board[row][0] = 0
 
-        self.board[f[0]][f[1]] = moving_piece
+        self.board[f[0]][f[1]] = promote_piece_if_needed(moving_piece, f[0], promotion_choice)
         self.board[i[0]][i[1]] = 0
 
         self.update_castling_rights(i, f, moving_piece, captured_piece)
@@ -423,40 +595,50 @@ class Board:
             self.en_passant_target = None
 
     def update_castling_rights(self, start, end, moving_piece, captured_piece):
+        self.update_castling_rights_for(
+            self.castling_rights,
+            start,
+            end,
+            moving_piece,
+            captured_piece,
+        )
+
+    def update_castling_rights_for(self, castling_rights, start, end, moving_piece, captured_piece):
         if moving_piece == 6:
-            self.castling_rights['white']['king_side'] = False
-            self.castling_rights['white']['queen_side'] = False
+            castling_rights['white']['king_side'] = False
+            castling_rights['white']['queen_side'] = False
         elif moving_piece == 12:
-            self.castling_rights['black']['king_side'] = False
-            self.castling_rights['black']['queen_side'] = False
+            castling_rights['black']['king_side'] = False
+            castling_rights['black']['queen_side'] = False
         elif moving_piece == 4:
             if start == (7, 0):
-                self.castling_rights['white']['queen_side'] = False
+                castling_rights['white']['queen_side'] = False
             elif start == (7, 7):
-                self.castling_rights['white']['king_side'] = False
+                castling_rights['white']['king_side'] = False
         elif moving_piece == 10:
             if start == (0, 0):
-                self.castling_rights['black']['queen_side'] = False
+                castling_rights['black']['queen_side'] = False
             elif start == (0, 7):
-                self.castling_rights['black']['king_side'] = False
+                castling_rights['black']['king_side'] = False
 
         if captured_piece == 4:
             if end == (7, 0):
-                self.castling_rights['white']['queen_side'] = False
+                castling_rights['white']['queen_side'] = False
             elif end == (7, 7):
-                self.castling_rights['white']['king_side'] = False
+                castling_rights['white']['king_side'] = False
         elif captured_piece == 10:
             if end == (0, 0):
-                self.castling_rights['black']['queen_side'] = False
+                castling_rights['black']['queen_side'] = False
             elif end == (0, 7):
-                self.castling_rights['black']['king_side'] = False
+                castling_rights['black']['king_side'] = False
 
-    def can_castle(self, color, side, board):
+    def can_castle(self, color, side, board, castling_rights=None):
+        castling_rights = self.castling_rights if castling_rights is None else castling_rights
         row = 7 if color == 'white' else 0
         king_piece = 6 if color == 'white' else 12
         rook_piece = 4 if color == 'white' else 10
 
-        if not self.castling_rights[color][side]:
+        if not castling_rights[color][side]:
             return False
         if board[row][4] != king_piece:
             return False
@@ -485,7 +667,17 @@ class Board:
                 return False
 
         return True
-    def get_legal_moves(self,cell,board,validate_check=True):
+    def get_legal_moves(
+        self,
+        cell,
+        board,
+        validate_check=True,
+        en_passant_target=USE_BOARD_STATE,
+        castling_rights=None,
+    ):
+        if en_passant_target is USE_BOARD_STATE:
+            en_passant_target = self.en_passant_target
+        castling_rights = self.castling_rights if castling_rights is None else castling_rights
         legal_moves = []
         piece = self.get_piece(cell, board)
         if piece == 2 or piece == 8:
@@ -530,7 +722,7 @@ class Board:
 
                 target_piece = board[capture_row][capture_col]
                 if target_piece == 0:
-                    if self.en_passant_target == (capture_row, capture_col):
+                    if en_passant_target == (capture_row, capture_col):
                         legal_moves.append((capture_row, capture_col))
                     continue
 
@@ -614,9 +806,9 @@ class Board:
                         legal_moves.append((target_row, target_col))
             if validate_check and cell == ((7, 4) if is_white_piece else (0, 4)):
                 color = 'white' if is_white_piece else 'black'
-                if self.can_castle(color, 'king_side', board):
+                if self.can_castle(color, 'king_side', board, castling_rights):
                     legal_moves.append((cell[0], 6))
-                if self.can_castle(color, 'queen_side', board):
+                if self.can_castle(color, 'queen_side', board, castling_rights):
                     legal_moves.append((cell[0], 2))
         if validate_check:
             color = 'white' if piece <= 6 else 'black'
@@ -626,15 +818,18 @@ class Board:
                 if target_piece in (6, 12):
                     continue
 
-                temp_board = self.move_on_copy(board, (cell, move))
+                temp_board = self.move_on_copy(
+                    board,
+                    (cell, move),
+                    en_passant_target,
+                    castling_rights,
+                )
                 if not self.is_in_check(color, temp_board):
                     filtered_moves.append(move)
             legal_moves = filtered_moves
 
         return legal_moves
             
-game_board = Board(screen)
-
 def calculate_ai_move(board_state, en_passant_target, castling_rights):
     worker_board = Board(None)
     worker_board.board = [row[:] for row in board_state]
@@ -642,64 +837,91 @@ def calculate_ai_move(board_state, en_passant_target, castling_rights):
     worker_board.castling_rights = copy.deepcopy(castling_rights)
     return worker_board.get_best_move()
 
-picked = False
-while running:
-    mouse_cell = get_mouse_cell()
-    for event in pygame.event.get():
-        if event.type == pygame.QUIT:
-            running = False
-        if event.type == pygame.MOUSEBUTTONDOWN and game_board.result_text is None:
-            if not game_board.turn:
-                clicked_piece = game_board.get_piece(mouse_cell, game_board.board)
-                if not picked and 0 < clicked_piece < 7:
-                    picked = True
-                    picked_cell = mouse_cell
-                    game_board.selected = picked_cell
-                    game_board.selected_legal_moves = game_board.get_legal_moves(picked_cell, game_board.board)
-                elif picked:
-                    legal_moves = game_board.selected_legal_moves
-                    if clicked_piece == 0 and mouse_cell not in legal_moves:
-                        picked = False
-                        game_board.selected = None
-                        game_board.selected_legal_moves = []
-                        picked_cell = None
-                    elif mouse_cell not in legal_moves:
-                        picked = False
-                        game_board.selected = None
-                        game_board.selected_legal_moves = []
-                        picked_cell = None
-                    elif mouse_cell != picked_cell and mouse_cell in legal_moves:
-                        picked = False
-                        game_board.move_piece(picked_cell, mouse_cell)
-                        game_board.selected = None
-                        game_board.selected_legal_moves = []
-                        game_board.turn = not game_board.turn
+def main():
+    global running, ai_future
 
-    if game_board.turn and game_board.result_text is None:
-        if ai_future is None:
-            if not game_board.check_game_over(True):
-                timer = time.perf_counter()
-                board_snapshot = [row[:] for row in game_board.board]
-                en_passant_snapshot = game_board.en_passant_target
-                castling_snapshot = copy.deepcopy(game_board.castling_rights)
-                ai_future = ai_executor.submit(
-                    calculate_ai_move,
-                    board_snapshot,
-                    en_passant_snapshot,
-                    castling_snapshot,
-                )
-        elif ai_future.done():
-            move = ai_future.result()
-            ai_future = None
-            if move is not None:
-                game_board.move_piece(move[0], move[1])
-                game_board.turn = not game_board.turn
-                game_board.check_game_over(False)
-                timer = time.perf_counter() - timer
-                print(f"AI move calculated in {timer:.2f} seconds")
+    game_board = Board(screen)
+    picked = False
+    picked_cell = None
 
-    if mouse_cell:
-        game_board.hovered = mouse_cell
-    game_board.draw()
-    pygame.display.flip()
-ai_executor.shutdown(wait=False)
+    while running:
+        mouse_cell = get_mouse_cell()
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                running = False
+            if game_board.pending_promotion is not None:
+                if event.type == pygame.KEYDOWN and event.key in (pygame.K_q, pygame.K_n):
+                    promotion_choice = "queen" if event.key == pygame.K_q else "knight"
+                    start, end = game_board.pending_promotion
+                    game_board.move_piece(start, end, promotion_choice=promotion_choice)
+                    picked = False
+                    picked_cell = None
+                    game_board.pending_promotion = None
+                    game_board.selected = None
+                    game_board.selected_legal_moves = []
+                    game_board.turn = not game_board.turn
+                continue
+            if event.type == pygame.MOUSEBUTTONDOWN and game_board.result_text is None:
+                if not game_board.turn:
+                    clicked_piece = game_board.get_piece(mouse_cell, game_board.board)
+                    if not picked and 0 < clicked_piece < 7:
+                        picked = True
+                        picked_cell = mouse_cell
+                        game_board.selected = picked_cell
+                        game_board.selected_legal_moves = game_board.get_legal_moves(picked_cell, game_board.board)
+                    elif picked:
+                        legal_moves = game_board.selected_legal_moves
+                        if clicked_piece == 0 and mouse_cell not in legal_moves:
+                            picked = False
+                            game_board.selected = None
+                            game_board.selected_legal_moves = []
+                            picked_cell = None
+                        elif mouse_cell not in legal_moves:
+                            picked = False
+                            game_board.selected = None
+                            game_board.selected_legal_moves = []
+                            picked_cell = None
+                        elif mouse_cell != picked_cell and mouse_cell in legal_moves:
+                            picked = False
+                            if game_board.is_promotion_move(picked_cell, mouse_cell):
+                                game_board.pending_promotion = (picked_cell, mouse_cell)
+                            else:
+                                game_board.move_piece(picked_cell, mouse_cell)
+                                game_board.selected = None
+                                game_board.selected_legal_moves = []
+                                game_board.turn = not game_board.turn
+
+        if game_board.turn and game_board.result_text is None:
+            if ai_future is None:
+                if not game_board.check_game_over(True):
+                    timer = time.perf_counter()
+                    board_snapshot = [row[:] for row in game_board.board]
+                    en_passant_snapshot = game_board.en_passant_target
+                    castling_snapshot = copy.deepcopy(game_board.castling_rights)
+                    ai_future = ai_executor.submit(
+                        calculate_ai_move,
+                        board_snapshot,
+                        en_passant_snapshot,
+                        castling_snapshot,
+                    )
+            elif ai_future.done():
+                move = ai_future.result()
+                ai_future = None
+                if move is not None:
+                    start, end, promotion_choice = normalize_move(move)
+                    game_board.move_piece(start, end, promotion_choice or "queen")
+                    game_board.turn = not game_board.turn
+                    game_board.check_game_over(False)
+                    timer = time.perf_counter() - timer
+                    print(f"AI move calculated in {timer:.2f} seconds")
+
+        if mouse_cell:
+            game_board.hovered = mouse_cell
+        game_board.draw()
+        pygame.display.flip()
+
+    ai_executor.shutdown(wait=False)
+
+
+if __name__ == "__main__":
+    main()
