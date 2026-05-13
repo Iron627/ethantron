@@ -444,6 +444,11 @@ class Board:
         if castling_rights is None:
             castling_rights = self.castling_rights
         if depth == 0:
+            color = 'black' if maximizing else 'white'
+            if self.is_in_check(color, board):
+                moves = self.get_all_moves(board, maximizing, en_passant_target, castling_rights)
+                if not moves:
+                    return -MATE_SCORE if maximizing else MATE_SCORE
             return self.eval(board)
 
         moves = self.get_all_moves(board, maximizing, en_passant_target, castling_rights)
