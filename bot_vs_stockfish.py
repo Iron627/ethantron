@@ -59,7 +59,7 @@ def get_stockfish_move(board):
             "fen": fen,
             "variants": 1,
             "depth": 12,
-            "maxThinkingTime": 100,
+            "maxThinkingTime": 1000,
         },
         headers={"Content-Type": "application/json"},
         timeout=30,
