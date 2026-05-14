@@ -1,4 +1,5 @@
 import copy
+import random
 # Piece Map: 0: empty space, 1: Pawn, 2: Knight, 3: Bishop, 4: Rook, 5: Queen, 6: King
 #            7: Black Pawn, 8: Black Knight, 9: Black Bishop, 10: Black Rook, 11: Black Queen, 12: Black King
 material_values = {0: 0, 1: 100, 2: 320, 3: 330, 4: 500, 5: 900, 6: 0}
@@ -53,6 +54,53 @@ piece_square_tables = {1: [[0, 0, 0, 0, 0, 0, 0, 0],
 AI_DEPTH = 4
 MATE_SCORE = 1000000
 USE_BOARD_STATE = object()
+TT_EXACT = 0
+TT_LOWERBOUND = 1
+TT_UPPERBOUND = 2
+TT_MAX_ENTRIES = 500000
+
+_zobrist_rng = random.Random(0)
+ZOBRIST_PIECE = [
+    [[_zobrist_rng.getrandbits(64) for _ in range(8)] for _ in range(8)]
+    for _ in range(13)
+]
+ZOBRIST_BLACK_TO_MOVE = _zobrist_rng.getrandbits(64)
+ZOBRIST_CASTLING = [_zobrist_rng.getrandbits(64) for _ in range(16)]
+ZOBRIST_EN_PASSANT_FILE = [_zobrist_rng.getrandbits(64) for _ in range(8)]
+
+
+def castling_rights_to_index(castling_rights):
+    idx = 0
+    if castling_rights['white']['king_side']:
+        idx |= 1
+    if castling_rights['white']['queen_side']:
+        idx |= 2
+    if castling_rights['black']['king_side']:
+        idx |= 4
+    if castling_rights['black']['queen_side']:
+        idx |= 8
+    return idx
+
+
+def hash_position(board, black_to_move, en_passant_target, castling_rights):
+    h = 0
+    for row_no in range(8):
+        for col_no in range(8):
+            piece = board[row_no][col_no]
+            if piece != 0:
+                h ^= ZOBRIST_PIECE[piece][row_no][col_no]
+
+    if black_to_move:
+        h ^= ZOBRIST_BLACK_TO_MOVE
+
+    h ^= ZOBRIST_CASTLING[castling_rights_to_index(castling_rights)]
+
+    if en_passant_target is not None:
+        h ^= ZOBRIST_EN_PASSANT_FILE[en_passant_target[1]]
+
+    return h
+
+
 def get_material_value(piece):
     if piece > 6:
         piece -= 6
@@ -131,6 +179,7 @@ class Board:
             'black': {'king_side': True, 'queen_side': True},
         }
         self.result_text = None
+        self.tt = {}
     def is_in_check(self, color, board):
         king_piece = 6 if color == 'white' else 12
         king_row = None
@@ -361,6 +410,23 @@ class Board:
             en_passant_target = self.en_passant_target
         if castling_rights is None:
             castling_rights = self.castling_rights
+
+        position_key = hash_position(board, maximizing, en_passant_target, castling_rights)
+        tt_entry = self.tt.get(position_key)
+        if tt_entry is not None and tt_entry[0] >= depth:
+            _, tt_flag, tt_score, _ = tt_entry
+            if tt_flag == TT_EXACT:
+                return tt_score
+            if tt_flag == TT_LOWERBOUND:
+                alpha = max(alpha, tt_score)
+            elif tt_flag == TT_UPPERBOUND:
+                beta = min(beta, tt_score)
+            if alpha >= beta:
+                return tt_score
+
+        original_alpha = alpha
+        original_beta = beta
+
         if depth == 0:
             color = 'black' if maximizing else 'white'
             if self.is_in_check(color, board):
@@ -377,9 +443,14 @@ class Board:
             return 0
 
         moves.sort(key=lambda move: self.score_move(board, move), reverse=True)
+        if tt_entry is not None and tt_entry[3] in moves:
+            tt_move = tt_entry[3]
+            moves.remove(tt_move)
+            moves.insert(0, tt_move)
 
         if maximizing:
             best = float('-inf')
+            best_move = None
             for move in moves:
                 next_board, next_en_passant, next_castling = self.apply_move_to_copy(
                     board,
@@ -396,13 +467,25 @@ class Board:
                     next_en_passant,
                     next_castling,
                 )
-                best = max(best, score)
+                if score > best:
+                    best = score
+                    best_move = move
                 alpha = max(alpha, best)
                 if beta <= alpha:
                     break
+            if len(self.tt) >= TT_MAX_ENTRIES:
+                self.tt.clear()
+            if best <= original_alpha:
+                tt_flag = TT_UPPERBOUND
+            elif best >= original_beta:
+                tt_flag = TT_LOWERBOUND
+            else:
+                tt_flag = TT_EXACT
+            self.tt[position_key] = (depth, tt_flag, best, best_move)
             return best
 
         best = float('inf')
+        best_move = None
         for move in moves:
             next_board, next_en_passant, next_castling = self.apply_move_to_copy(
                 board,
@@ -419,10 +502,21 @@ class Board:
                 next_en_passant,
                 next_castling,
             )
-            best = min(best, score)
+            if score < best:
+                best = score
+                best_move = move
             beta = min(beta, best)
             if beta <= alpha:
                 break
+        if len(self.tt) >= TT_MAX_ENTRIES:
+            self.tt.clear()
+        if best <= original_alpha:
+            tt_flag = TT_UPPERBOUND
+        elif best >= original_beta:
+            tt_flag = TT_LOWERBOUND
+        else:
+            tt_flag = TT_EXACT
+        self.tt[position_key] = (depth, tt_flag, best, best_move)
         return best
 
     def score_move(self, board, move):
