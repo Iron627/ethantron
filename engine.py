@@ -1,5 +1,6 @@
 import copy
 import random
+import time
 # Piece Map: 0: empty space, 1: Pawn, 2: Knight, 3: Bishop, 4: Rook, 5: Queen, 6: King
 #            7: Black Pawn, 8: Black Knight, 9: Black Bishop, 10: Black Rook, 11: Black Queen, 12: Black King
 material_values = {0: 0, 1: 100, 2: 320, 3: 330, 4: 500, 5: 900, 6: 0}
@@ -53,6 +54,8 @@ piece_square_tables = {1: [[0, 0, 0, 0, 0, 0, 0, 0],
      [20, 30, 10, 0, 0, 10, 30, 20]]}
 AI_DEPTH = 4
 MATE_SCORE = 1000000
+QUIESCENCE_DEPTH = 4
+SEARCH_TIME_LIMIT_SECONDS = 15
 USE_BOARD_STATE = object()
 TT_EXACT = 0
 TT_LOWERBOUND = 1
@@ -105,11 +108,6 @@ def get_material_value(piece):
     if piece > 6:
         piece -= 6
     return material_values[piece]
-
-def get_piece_square_value(piece, row, col):
-    base_piece = piece - 6 if piece > 6 else piece
-    table_row = 7 - row if piece > 6 else row
-    return piece_square_tables[base_piece][table_row][col]
 
 def promote_piece_if_needed(piece, row, promotion_choice="queen"):
     white_promotions = {"queen": 5, "knight": 2}
@@ -180,6 +178,7 @@ class Board:
         }
         self.result_text = None
         self.tt = {}
+        self.search_deadline = None
     def is_in_check(self, color, board):
         king_piece = 6 if color == 'white' else 12
         king_row = None
@@ -406,6 +405,9 @@ class Board:
         en_passant_target=USE_BOARD_STATE,
         castling_rights=None,
     ):
+        if self.search_deadline is not None and time.monotonic() >= self.search_deadline:
+            raise TimeoutError
+
         if en_passant_target is USE_BOARD_STATE:
             en_passant_target = self.en_passant_target
         if castling_rights is None:
@@ -428,12 +430,15 @@ class Board:
         original_beta = beta
 
         if depth == 0:
-            color = 'black' if maximizing else 'white'
-            if self.is_in_check(color, board):
-                moves = self.get_all_moves(board, maximizing, en_passant_target, castling_rights)
-                if not moves:
-                    return -MATE_SCORE if maximizing else MATE_SCORE
-            return self.eval(board)
+            return self.quiescence(
+                board,
+                alpha,
+                beta,
+                maximizing,
+                en_passant_target,
+                castling_rights,
+                QUIESCENCE_DEPTH,
+            )
 
         moves = self.get_all_moves(board, maximizing, en_passant_target, castling_rights)
         if not moves:
@@ -442,7 +447,7 @@ class Board:
                 return -MATE_SCORE if maximizing else MATE_SCORE
             return 0
 
-        moves.sort(key=lambda move: self.score_move(board, move), reverse=True)
+        moves.sort(key=lambda move: self.score_move(board, move, en_passant_target), reverse=True)
         if tt_entry is not None and tt_entry[3] in moves:
             tt_move = tt_entry[3]
             moves.remove(tt_move)
@@ -519,11 +524,133 @@ class Board:
         self.tt[position_key] = (depth, tt_flag, best, best_move)
         return best
 
-    def score_move(self, board, move):
+    def quiescence(
+        self,
+        board,
+        alpha,
+        beta,
+        maximizing,
+        en_passant_target=USE_BOARD_STATE,
+        castling_rights=None,
+        depth=QUIESCENCE_DEPTH,
+    ):
+        if self.search_deadline is not None and time.monotonic() >= self.search_deadline:
+            raise TimeoutError
+
+        if en_passant_target is USE_BOARD_STATE:
+            en_passant_target = self.en_passant_target
+        if castling_rights is None:
+            castling_rights = self.castling_rights
+
+        color = 'black' if maximizing else 'white'
+        in_check = self.is_in_check(color, board)
+
+        if depth <= 0:
+            if in_check:
+                moves = self.get_all_moves(board, maximizing, en_passant_target, castling_rights)
+                if not moves:
+                    return -MATE_SCORE if maximizing else MATE_SCORE
+            return self.eval(board)
+
+        if in_check:
+            moves = self.get_all_moves(board, maximizing, en_passant_target, castling_rights)
+            if not moves:
+                return -MATE_SCORE if maximizing else MATE_SCORE
+        else:
+            stand_pat = self.eval(board)
+            if maximizing:
+                if stand_pat >= beta:
+                    return stand_pat
+                alpha = max(alpha, stand_pat)
+            else:
+                if stand_pat <= alpha:
+                    return stand_pat
+                beta = min(beta, stand_pat)
+
+            moves = [
+                move for move in self.get_all_moves(board, maximizing, en_passant_target, castling_rights)
+                if self.is_tactical_move(board, move, en_passant_target)
+            ]
+            if not moves:
+                return stand_pat
+
+        moves.sort(key=lambda move: self.score_move(board, move, en_passant_target), reverse=True)
+
+        if maximizing:
+            best = float('-inf') if in_check else stand_pat
+            for move in moves:
+                next_board, next_en_passant, next_castling = self.apply_move_to_copy(
+                    board,
+                    move,
+                    en_passant_target,
+                    castling_rights,
+                )
+                score = self.quiescence(
+                    next_board,
+                    alpha,
+                    beta,
+                    False,
+                    next_en_passant,
+                    next_castling,
+                    depth - 1,
+                )
+                best = max(best, score)
+                alpha = max(alpha, best)
+                if beta <= alpha:
+                    break
+            return best
+
+        best = float('inf') if in_check else stand_pat
+        for move in moves:
+            next_board, next_en_passant, next_castling = self.apply_move_to_copy(
+                board,
+                move,
+                en_passant_target,
+                castling_rights,
+            )
+            score = self.quiescence(
+                next_board,
+                alpha,
+                beta,
+                True,
+                next_en_passant,
+                next_castling,
+                depth - 1,
+            )
+            best = min(best, score)
+            beta = min(beta, best)
+            if beta <= alpha:
+                break
+        return best
+
+    def is_tactical_move(self, board, move, en_passant_target=None):
+        start, end, promotion_choice = normalize_move(move)
+        moving_piece = board[start[0]][start[1]]
+        captured_piece = board[end[0]][end[1]]
+
+        return (
+            captured_piece != 0
+            or promotion_choice is not None
+            or (
+                moving_piece in (1, 7)
+                and en_passant_target == end
+                and start[1] != end[1]
+            )
+        )
+
+    def score_move(self, board, move, en_passant_target=None):
         start, end, promotion_choice = normalize_move(move)
         moving_piece = board[start[0]][start[1]]
         captured_piece = board[end[0]][end[1]]
         score = 0
+
+        if (
+            moving_piece in (1, 7)
+            and en_passant_target == end
+            and start[1] != end[1]
+            and captured_piece == 0
+        ):
+            captured_piece = 7 if moving_piece == 1 else 1
 
         if captured_piece != 0:
             score += 10 * get_material_value(captured_piece)
@@ -539,40 +666,42 @@ class Board:
         
         return score
 
-    def get_best_move(self, depth=AI_DEPTH):
+    def get_best_move(self, depth=AI_DEPTH, time_limit=SEARCH_TIME_LIMIT_SECONDS):
         best_move = None
         best_score = float('-inf')
         moves = self.get_all_moves(self.board, True, self.en_passant_target, self.castling_rights)
-        moves.sort(key=lambda move: self.score_move(self.board, move), reverse=True)
+        moves.sort(key=lambda move: self.score_move(self.board, move, self.en_passant_target), reverse=True)
 
-        for move in moves:
-            board_after_move, en_passant_after_move, castling_after_move = self.apply_move_to_copy(
-                self.board,
-                move,
-                self.en_passant_target,
-                self.castling_rights,
-            )
-            score = self.minimax(
-                board_after_move,
-                depth - 1,
-                float('-inf'),
-                float('inf'),
-                False,
-                en_passant_after_move,
-                castling_after_move,
-            )
-            if score > best_score:
-                best_score = score
-                best_move = move
+        self.search_deadline = time.monotonic() + time_limit if time_limit is not None else None
+        try:
+            for move in moves:
+                if self.search_deadline is not None and time.monotonic() >= self.search_deadline:
+                    break
+
+                board_after_move, en_passant_after_move, castling_after_move = self.apply_move_to_copy(
+                    self.board,
+                    move,
+                    self.en_passant_target,
+                    self.castling_rights,
+                )
+                score = self.minimax(
+                    board_after_move,
+                    depth - 1,
+                    float('-inf'),
+                    float('inf'),
+                    False,
+                    en_passant_after_move,
+                    castling_after_move,
+                )
+                if score > best_score:
+                    best_score = score
+                    best_move = move
+        except TimeoutError:
+            pass
+        finally:
+            self.search_deadline = None
 
         return best_move
-
-    def ai_move(self):
-        move = self.get_best_move()
-        if move is not None:
-            start, end, promotion_choice = normalize_move(move)
-            self.move_piece(start, end, promotion_choice or "queen")
-            self.turn = not self.turn
 
     def is_promotion_move(self, start, end):
         moving_piece = self.get_piece(start, self.board)
