@@ -3,9 +3,9 @@ import os
 import requests
 import chess
 import chess.pgn
-
+import time
 API_URL = "https://chess-api.com/v1"
-
+time_last_turn = 0.0
 
 def load_engine_module():
     engine_path = os.path.join(os.path.dirname(__file__), "engine.py")
@@ -75,6 +75,7 @@ def get_stockfish_move(board):
 
 
 def main():
+    global time_last_turn
     engine_module = load_engine_module()
     engine_board = engine_module.Board(None)
     chess_board = chess.Board()
@@ -101,9 +102,11 @@ def main():
             move_uci = get_stockfish_move(chess_board)
             print("Stockfish plays:", move_uci)
         else:
-            print("Your engine thinking...")
+            print(f"Your engine thinking... It took {time_last_turn:.2f} seconds last turn.")
+            start = time.perf_counter()
             best_move = engine_board.get_best_move()
-
+            time_last_turn = time.perf_counter() - start
+            
             if best_move is None:
                 print("Engine has no legal move.")
                 break
