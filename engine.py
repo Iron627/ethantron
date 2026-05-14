@@ -61,6 +61,7 @@ TT_EXACT = 0
 TT_LOWERBOUND = 1
 TT_UPPERBOUND = 2
 TT_MAX_ENTRIES = 500000
+KING_ATTACK_WEIGHTS = {1: 6, 2: 14, 3: 14, 4: 20, 5: 32, 6: 0}
 
 _zobrist_rng = random.Random(0)
 ZOBRIST_PIECE = [
@@ -178,6 +179,7 @@ class Board:
         }
         self.result_text = None
         self.tt = {}
+        self.qtt = {}
         self.search_deadline = None
     def is_in_check(self, color, board):
         king_piece = 6 if color == 'white' else 12
@@ -291,7 +293,133 @@ class Board:
             score -= 30
         if black_bishops >= 2:
             score += 30
+        score += self.evaluate_king_safety(board)
         return score
+
+    def evaluate_king_safety(self, board):
+        white_penalty = self.king_safety_penalty(board, 'white')
+        black_penalty = self.king_safety_penalty(board, 'black')
+        return white_penalty - black_penalty
+
+    def king_safety_penalty(self, board, color):
+        king_piece = 6 if color == 'white' else 12
+        king_square = self.find_piece(board, king_piece)
+        if king_square is None:
+            return 0
+
+        king_row, king_col = king_square
+        attacked_by_black = color == 'white'
+        penalty = 40 if self.is_in_check(color, board) else 0
+
+        for row in range(max(0, king_row - 1), min(8, king_row + 2)):
+            for col in range(max(0, king_col - 1), min(8, king_col + 2)):
+                penalty += self.attack_pressure_on_square(board, row, col, attacked_by_black)
+
+        friendly_pawn = 1 if color == 'white' else 7
+        forward = -1 if color == 'white' else 1
+        for col in range(max(0, king_col - 1), min(8, king_col + 2)):
+            shield_row = king_row + forward
+            backup_row = king_row + (2 * forward)
+            if 0 <= shield_row < 8 and board[shield_row][col] == friendly_pawn:
+                continue
+            if 0 <= backup_row < 8 and board[backup_row][col] == friendly_pawn:
+                penalty += 6
+            else:
+                penalty += 12
+
+            has_friendly_pawn_on_file = any(row[col] == friendly_pawn for row in board)
+            has_any_pawn_on_file = any(row[col] in (1, 7) for row in board)
+            if not has_friendly_pawn_on_file:
+                penalty += 8
+            if not has_any_pawn_on_file:
+                penalty += 6
+
+        attacking_material = self.non_pawn_material(board, attacked_by_black)
+        phase = min(100, max(25, attacking_material * 100 // 2400))
+        return penalty * phase // 100
+
+    def find_piece(self, board, target_piece):
+        for row_no, row in enumerate(board):
+            for col_no, piece in enumerate(row):
+                if piece == target_piece:
+                    return row_no, col_no
+        return None
+
+    def non_pawn_material(self, board, black_pieces):
+        total = 0
+        for row in board:
+            for piece in row:
+                if black_pieces and 8 <= piece <= 11:
+                    total += get_material_value(piece)
+                elif not black_pieces and 2 <= piece <= 5:
+                    total += get_material_value(piece)
+        return total
+
+    def attack_pressure_on_square(self, board, row, col, attacked_by_black):
+        pawn_piece = 7 if attacked_by_black else 1
+        knight_piece = 8 if attacked_by_black else 2
+        bishop_piece = 9 if attacked_by_black else 3
+        rook_piece = 10 if attacked_by_black else 4
+        queen_piece = 11 if attacked_by_black else 5
+        king_piece = 12 if attacked_by_black else 6
+        pressure = 0
+
+        pawn_source_row = row - 1 if attacked_by_black else row + 1
+        if 0 <= pawn_source_row < 8:
+            for pawn_col in (col - 1, col + 1):
+                if 0 <= pawn_col < 8 and board[pawn_source_row][pawn_col] == pawn_piece:
+                    pressure += KING_ATTACK_WEIGHTS[1]
+
+        knight_offsets = [
+            (-2, -1), (-2, 1), (-1, -2), (-1, 2),
+            (1, -2), (1, 2), (2, -1), (2, 1)
+        ]
+        for row_offset, col_offset in knight_offsets:
+            target_row = row + row_offset
+            target_col = col + col_offset
+            if 0 <= target_row < 8 and 0 <= target_col < 8:
+                if board[target_row][target_col] == knight_piece:
+                    pressure += KING_ATTACK_WEIGHTS[2]
+
+        diagonal_directions = [(-1, -1), (-1, 1), (1, -1), (1, 1)]
+        for row_dir, col_dir in diagonal_directions:
+            target_row = row + row_dir
+            target_col = col + col_dir
+            while 0 <= target_row < 8 and 0 <= target_col < 8:
+                piece = board[target_row][target_col]
+                if piece != 0:
+                    if piece in (bishop_piece, queen_piece):
+                        pressure += KING_ATTACK_WEIGHTS[3 if piece == bishop_piece else 5]
+                    break
+                target_row += row_dir
+                target_col += col_dir
+
+        straight_directions = [(-1, 0), (1, 0), (0, -1), (0, 1)]
+        for row_dir, col_dir in straight_directions:
+            target_row = row + row_dir
+            target_col = col + col_dir
+            while 0 <= target_row < 8 and 0 <= target_col < 8:
+                piece = board[target_row][target_col]
+                if piece != 0:
+                    if piece in (rook_piece, queen_piece):
+                        pressure += KING_ATTACK_WEIGHTS[4 if piece == rook_piece else 5]
+                    break
+                target_row += row_dir
+                target_col += col_dir
+
+        king_offsets = [
+            (-1, -1), (-1, 0), (-1, 1),
+            (0, -1), (0, 1),
+            (1, -1), (1, 0), (1, 1)
+        ]
+        for row_offset, col_offset in king_offsets:
+            target_row = row + row_offset
+            target_col = col + col_offset
+            if 0 <= target_row < 8 and 0 <= target_col < 8:
+                if board[target_row][target_col] == king_piece:
+                    pressure += KING_ATTACK_WEIGHTS[6]
+
+        return pressure
 
     def get_all_moves(self, board, black_turn, en_passant_target=USE_BOARD_STATE, castling_rights=None):
         moves = []
@@ -542,6 +670,33 @@ class Board:
         if castling_rights is None:
             castling_rights = self.castling_rights
 
+        position_key = hash_position(board, maximizing, en_passant_target, castling_rights)
+        original_alpha = alpha
+        original_beta = beta
+        tt_entry = self.qtt.get(position_key)
+        if tt_entry is not None and tt_entry[0] >= depth:
+            _, tt_flag, tt_score = tt_entry
+            if tt_flag == TT_EXACT:
+                return tt_score
+            if tt_flag == TT_LOWERBOUND:
+                alpha = max(alpha, tt_score)
+            elif tt_flag == TT_UPPERBOUND:
+                beta = min(beta, tt_score)
+            if alpha >= beta:
+                return tt_score
+
+        def store_quiescence_score(score):
+            if len(self.qtt) >= TT_MAX_ENTRIES:
+                self.qtt.clear()
+            if score <= original_alpha:
+                tt_flag = TT_UPPERBOUND
+            elif score >= original_beta:
+                tt_flag = TT_LOWERBOUND
+            else:
+                tt_flag = TT_EXACT
+            self.qtt[position_key] = (depth, tt_flag, score)
+            return score
+
         color = 'black' if maximizing else 'white'
         in_check = self.is_in_check(color, board)
 
@@ -549,22 +704,22 @@ class Board:
             if in_check:
                 moves = self.get_all_moves(board, maximizing, en_passant_target, castling_rights)
                 if not moves:
-                    return -MATE_SCORE if maximizing else MATE_SCORE
-            return self.eval(board)
+                    return store_quiescence_score(-MATE_SCORE if maximizing else MATE_SCORE)
+            return store_quiescence_score(self.eval(board))
 
         if in_check:
             moves = self.get_all_moves(board, maximizing, en_passant_target, castling_rights)
             if not moves:
-                return -MATE_SCORE if maximizing else MATE_SCORE
+                return store_quiescence_score(-MATE_SCORE if maximizing else MATE_SCORE)
         else:
             stand_pat = self.eval(board)
             if maximizing:
                 if stand_pat >= beta:
-                    return stand_pat
+                    return store_quiescence_score(stand_pat)
                 alpha = max(alpha, stand_pat)
             else:
                 if stand_pat <= alpha:
-                    return stand_pat
+                    return store_quiescence_score(stand_pat)
                 beta = min(beta, stand_pat)
 
             moves = [
@@ -572,7 +727,7 @@ class Board:
                 if self.is_tactical_move(board, move, en_passant_target)
             ]
             if not moves:
-                return stand_pat
+                return store_quiescence_score(stand_pat)
 
         moves.sort(key=lambda move: self.score_move(board, move, en_passant_target), reverse=True)
 
@@ -598,7 +753,7 @@ class Board:
                 alpha = max(alpha, best)
                 if beta <= alpha:
                     break
-            return best
+            return store_quiescence_score(best)
 
         best = float('inf') if in_check else stand_pat
         for move in moves:
@@ -621,7 +776,7 @@ class Board:
             beta = min(beta, best)
             if beta <= alpha:
                 break
-        return best
+        return store_quiescence_score(best)
 
     def is_tactical_move(self, board, move, en_passant_target=None):
         start, end, promotion_choice = normalize_move(move)
