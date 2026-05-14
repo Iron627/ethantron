@@ -1,9 +1,5 @@
 import importlib.util
 import os
-
-os.environ["SDL_VIDEODRIVER"] = "dummy"
-
-import pygame
 import requests
 import chess
 import chess.pgn
@@ -12,7 +8,7 @@ API_URL = "https://chess-api.com/v1"
 
 
 def load_engine_module():
-    engine_path = os.path.join(os.path.dirname(__file__), "main.py")
+    engine_path = os.path.join(os.path.dirname(__file__), "engine.py")
     spec = importlib.util.spec_from_file_location("engine_module", engine_path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -79,8 +75,6 @@ def get_stockfish_move(board):
 
 
 def main():
-    pygame.display.init()
-
     engine_module = load_engine_module()
     engine_board = engine_module.Board(None)
     chess_board = chess.Board()
