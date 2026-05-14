@@ -303,7 +303,7 @@ class Board:
             return 0
 
         king_row, king_col = king_square
-        penalty = 40 if self.is_in_check(color, board) else 0
+        penalty = 120 if self.is_in_check(color, board) else 0
 
         friendly_pawn = 1 if color == 'white' else 7
         forward = -1 if color == 'white' else 1
@@ -311,7 +311,7 @@ class Board:
             shield_row = king_row + forward
             if 0 <= shield_row < 8 and board[shield_row][col] == friendly_pawn:
                 continue
-            penalty += 10
+            penalty += 35
 
         return penalty
 
