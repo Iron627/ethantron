@@ -1,11 +1,19 @@
 import importlib.util
 import os
-import requests
-import chess
-import chess.pgn
+import random
 import time
-API_URL = "https://chess-api.com/v1"
+
+import chess
+import chess.engine
+import chess.pgn
+
+STOCKFISH_PATH = "stockfish"
+STOCKFISH_TIME = 1.0
+STOCKFISH_MULTIPV = 3
+RANDOM_CP_MARGIN = 10
+
 time_last_turn = 0.0
+
 
 def load_engine_module():
     engine_path = os.path.join(os.path.dirname(__file__), "engine.py")
@@ -21,7 +29,13 @@ def engine_move_to_uci(move):
     uci += chess.square_name(chess.square(end[1], 7 - end[0]))
 
     if len(move) == 3:
-        uci += "q" if move[2] == "queen" else "n"
+        promo_map = {
+            "queen": "q",
+            "rook": "r",
+            "bishop": "b",
+            "knight": "n",
+        }
+        uci += promo_map.get(move[2], "q")
 
     return uci
 
@@ -33,100 +47,118 @@ def apply_uci_move(engine_board, move_uci):
     start_cell = (7 - chess.square_rank(start), chess.square_file(start))
     end_cell = (7 - chess.square_rank(end), chess.square_file(end))
 
-    promotion = "queen"
-    if len(move_uci) == 5 and move_uci[4] == "n":
-        promotion = "knight"
+    promo_map = {
+        "q": "queen",
+        "r": "rook",
+        "b": "bishop",
+        "n": "knight",
+    }
+
+    promotion = None
+    if len(move_uci) == 5:
+        promotion = promo_map[move_uci[4]]
 
     engine_board.move_piece(start_cell, end_cell, promotion)
 
 
-def api_safe_fen(board):
-    parts = board.fen().split()
-    parts[3] = "-"
-    return " ".join(parts)
+def score_to_cp(score):
+    cp = score.relative.score(mate_score=100000)
+    return cp if cp is not None else 0
 
 
-def get_stockfish_move(board):
-    fen = api_safe_fen(board)
-
-    response = requests.post(
-        API_URL,
-        json={
-            "fen": fen,
-            "variants": 1,
-            "depth": 12,
-            "maxThinkingTime": 1000,
-        },
-        headers={"Content-Type": "application/json"},
-        timeout=30,
+def get_stockfish_move(sf_engine, board):
+    info = sf_engine.analyse(
+        board,
+        chess.engine.Limit(time=STOCKFISH_TIME),
+        multipv=STOCKFISH_MULTIPV,
     )
 
-    data = response.json()
+    best_cp = score_to_cp(info[0]["score"])
+    candidates = []
 
-    if data.get("type") == "error":
-        raise RuntimeError(f"API rejected FEN:\n{fen}\n\nResponse:\n{data}")
+    for line in info:
+        if "pv" not in line or not line["pv"]:
+            continue
 
-    move = data.get("move") or data.get("lan")
+        line_cp = score_to_cp(line["score"])
 
-    if not move:
-        raise RuntimeError(f"No move in API response:\n{data}")
+        if line_cp >= best_cp - RANDOM_CP_MARGIN:
+            candidates.append(line["pv"][0])
 
-    return move
+    if not candidates:
+        candidates = [info[0]["pv"][0]]
+
+    return random.choice(candidates).uci()
 
 
 def main():
     global time_last_turn
+
     engine_module = load_engine_module()
     engine_board = engine_module.Board(None)
     chess_board = chess.Board()
 
+    sf_engine = chess.engine.SimpleEngine.popen_uci(STOCKFISH_PATH)
+    sf_engine.configure({
+        "Threads": 8,
+        "Hash": 1024,
+        "Skill Level": 20,
+        "UCI_LimitStrength": False,
+    })
+
     game = chess.pgn.Game()
-    game.headers["Event"] = "Stockfish API vs My Engine"
-    game.headers["White"] = "Stockfish API"
+    game.headers["Event"] = "Local Stockfish vs My Engine"
+    game.headers["White"] = "Local Stockfish"
     game.headers["Black"] = "My Engine"
     game.headers["Result"] = "*"
 
     node = game
-
     ply = 1
 
-    while not chess_board.is_game_over():
-        print("\n" + "=" * 50)
-        print(f"Ply {ply}")
-        print(chess_board)
-        print("FEN:", chess_board.fen())
-        print("=" * 50)
+    try:
+        while not chess_board.is_game_over():
+            print("\n" + "=" * 50)
+            print(f"Ply {ply}")
+            print(chess_board)
+            print("FEN:", chess_board.fen())
+            print("=" * 50)
 
-        if chess_board.turn == chess.WHITE:
-            print("Stockfish API thinking...")
-            move_uci = get_stockfish_move(chess_board)
-            print("Stockfish plays:", move_uci)
-        else:
-            print(f"Your engine thinking... It took {time_last_turn:.2f} seconds last turn.")
-            start = time.perf_counter()
-            best_move = engine_board.get_best_move()
-            time_last_turn = time.perf_counter() - start
-            
-            if best_move is None:
-                print("Engine has no legal move.")
+            if chess_board.turn == chess.WHITE:
+                print("Stockfish thinking...")
+                move_uci = get_stockfish_move(sf_engine, chess_board)
+                print("Stockfish plays:", move_uci)
+
+            else:
+                print(f"Your engine thinking... It took {time_last_turn:.2f} seconds last turn.")
+                start = time.perf_counter()
+
+                best_move = engine_board.get_best_move()
+
+                time_last_turn = time.perf_counter() - start
+
+                if best_move is None:
+                    print("Engine has no legal move.")
+                    break
+
+                move_uci = engine_move_to_uci(best_move)
+                print("Engine plays:", move_uci)
+
+            move = chess.Move.from_uci(move_uci)
+
+            if move not in chess_board.legal_moves:
+                print("Illegal move:", move_uci)
+                print("Current FEN:", chess_board.fen())
                 break
 
-            move_uci = engine_move_to_uci(best_move)
-            print("Engine plays:", move_uci)
+            node = node.add_variation(move)
 
-        move = chess.Move.from_uci(move_uci)
+            chess_board.push(move)
+            apply_uci_move(engine_board, move_uci)
 
-        if move not in chess_board.legal_moves:
-            print("Illegal move:", move_uci)
-            print("Current FEN:", chess_board.fen())
-            break
+            ply += 1
 
-        node = node.add_variation(move)
-
-        chess_board.push(move)
-        apply_uci_move(engine_board, move_uci)
-
-        ply += 1
+    finally:
+        sf_engine.quit()
 
     result = chess_board.result()
     game.headers["Result"] = result
