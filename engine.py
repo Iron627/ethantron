@@ -180,30 +180,16 @@ class Board:
         self.tt = {}
         self.qtt = {}
         self.search_deadline = None
-    def is_in_check(self, color, board):
-        king_piece = 6 if color == 'white' else 12
-        king_row = None
-        king_col = None
-        for row_no in range(8):
-            for col_no in range(8):
-                if board[row_no][col_no] == king_piece:
-                    king_row = row_no
-                    king_col = col_no
-                    break
-            if king_row is not None:
-                break
 
-        if king_row is None:
-            return False
-
-        if color == 'white':
+    def is_square_attacked(self, board, row, col, attacker_color):
+        if attacker_color == 'black':
             pawn_piece = 7
             knight_piece = 8
             bishop_piece = 9
             rook_piece = 10
             queen_piece = 11
             enemy_king_piece = 12
-            pawn_row = king_row - 1
+            pawn_row = row - 1
         else:
             pawn_piece = 1
             knight_piece = 2
@@ -211,11 +197,11 @@ class Board:
             rook_piece = 4
             queen_piece = 5
             enemy_king_piece = 6
-            pawn_row = king_row + 1
+            pawn_row = row + 1
 
         if 0 <= pawn_row < 8:
             for col_offset in (-1, 1):
-                pawn_col = king_col + col_offset
+                pawn_col = col + col_offset
                 if 0 <= pawn_col < 8 and board[pawn_row][pawn_col] == pawn_piece:
                     return True
 
@@ -224,8 +210,8 @@ class Board:
             (1, -2), (1, 2), (2, -1), (2, 1)
         ]
         for row_offset, col_offset in knight_offsets:
-            target_row = king_row + row_offset
-            target_col = king_col + col_offset
+            target_row = row + row_offset
+            target_col = col + col_offset
             if 0 <= target_row < 8 and 0 <= target_col < 8:
                 if board[target_row][target_col] == knight_piece:
                     return True
@@ -236,16 +222,16 @@ class Board:
             (1, -1), (1, 0), (1, 1)
         ]
         for row_offset, col_offset in king_offsets:
-            target_row = king_row + row_offset
-            target_col = king_col + col_offset
+            target_row = row + row_offset
+            target_col = col + col_offset
             if 0 <= target_row < 8 and 0 <= target_col < 8:
                 if board[target_row][target_col] == enemy_king_piece:
                     return True
 
         diagonal_directions = [(-1, -1), (-1, 1), (1, -1), (1, 1)]
         for row_dir, col_dir in diagonal_directions:
-            target_row = king_row + row_dir
-            target_col = king_col + col_dir
+            target_row = row + row_dir
+            target_col = col + col_dir
             while 0 <= target_row < 8 and 0 <= target_col < 8:
                 piece = board[target_row][target_col]
                 if piece != 0:
@@ -257,8 +243,8 @@ class Board:
 
         straight_directions = [(-1, 0), (1, 0), (0, -1), (0, 1)]
         for row_dir, col_dir in straight_directions:
-            target_row = king_row + row_dir
-            target_col = king_col + col_dir
+            target_row = row + row_dir
+            target_col = col + col_dir
             while 0 <= target_row < 8 and 0 <= target_col < 8:
                 piece = board[target_row][target_col]
                 if piece != 0:
@@ -269,6 +255,16 @@ class Board:
                 target_col += col_dir
 
         return False
+
+    def is_in_check(self, color, board):
+        king_piece = 6 if color == 'white' else 12
+        king_square = self.find_king(board, king_piece)
+        if king_square is None:
+            return False
+
+        attacker_color = 'black' if color == 'white' else 'white'
+        return self.is_square_attacked(board, king_square[0], king_square[1], attacker_color)
+
     def get_piece(self, i,board):
         return board[i[0]][i[1]]
     def eval(self, board=None):
@@ -328,6 +324,7 @@ class Board:
 
     def get_all_moves(self, board, black_turn, en_passant_target=USE_BOARD_STATE, castling_rights=None):
         moves = []
+        king_square = self.find_king(board, 12 if black_turn else 6)
         for row_no, row in enumerate(board):
             for col_no, piece in enumerate(row):
                 if black_turn and 7 <= piece <= 12:
@@ -337,7 +334,14 @@ class Board:
                 else:
                     continue
 
-                for end in self.get_legal_moves(start, board, True, en_passant_target, castling_rights):
+                for end in self.get_legal_moves(
+                    start,
+                    board,
+                    True,
+                    en_passant_target,
+                    castling_rights,
+                    king_square,
+                ):
                     for promotion_choice in get_promotion_choices(piece, end[0]):
                         if promotion_choice is None:
                             moves.append((start, end))
@@ -427,6 +431,69 @@ class Board:
             castling_rights,
         )
         return new_board
+
+    def make_temporary_move_for_check(self, board, start, end, en_passant_target):
+        moving_piece = board[start[0]][start[1]]
+        captured_piece = board[end[0]][end[1]]
+        en_passant_capture_square = None
+        en_passant_captured_piece = 0
+        castle_rook_move = None
+
+        if (
+            moving_piece in (1, 7)
+            and en_passant_target == end
+            and start[1] != end[1]
+            and captured_piece == 0
+        ):
+            en_passant_capture_square = (start[0], end[1])
+            en_passant_captured_piece = board[start[0]][end[1]]
+            board[start[0]][end[1]] = 0
+
+        if moving_piece in (6, 12) and abs(end[1] - start[1]) == 2:
+            row = start[0]
+            if end[1] == 6:
+                castle_rook_move = ((row, 7), (row, 5), board[row][7])
+                board[row][5] = board[row][7]
+                board[row][7] = 0
+            elif end[1] == 2:
+                castle_rook_move = ((row, 0), (row, 3), board[row][0])
+                board[row][3] = board[row][0]
+                board[row][0] = 0
+
+        board[end[0]][end[1]] = promote_piece_if_needed(moving_piece, end[0])
+        board[start[0]][start[1]] = 0
+
+        return (
+            start,
+            end,
+            moving_piece,
+            captured_piece,
+            en_passant_capture_square,
+            en_passant_captured_piece,
+            castle_rook_move,
+        )
+
+    def unmake_temporary_move_for_check(self, board, undo):
+        (
+            start,
+            end,
+            moving_piece,
+            captured_piece,
+            en_passant_capture_square,
+            en_passant_captured_piece,
+            castle_rook_move,
+        ) = undo
+
+        board[start[0]][start[1]] = moving_piece
+        board[end[0]][end[1]] = captured_piece
+
+        if en_passant_capture_square is not None:
+            board[en_passant_capture_square[0]][en_passant_capture_square[1]] = en_passant_captured_piece
+
+        if castle_rook_move is not None:
+            rook_start, rook_end, rook_piece = castle_rook_move
+            board[rook_start[0]][rook_start[1]] = rook_piece
+            board[rook_end[0]][rook_end[1]] = 0
 
     def minimax(
         self,
@@ -880,6 +947,7 @@ class Board:
         validate_check=True,
         en_passant_target=USE_BOARD_STATE,
         castling_rights=None,
+        king_square=None,
     ):
         if en_passant_target is USE_BOARD_STATE:
             en_passant_target = self.en_passant_target
@@ -1018,20 +1086,30 @@ class Board:
                     legal_moves.append((cell[0], 2))
         if validate_check:
             color = 'white' if piece <= 6 else 'black'
+            attacker_color = 'black' if color == 'white' else 'white'
+            king_piece = 6 if color == 'white' else 12
+            if piece == king_piece:
+                king_square = cell
+            elif king_square is None:
+                king_square = self.find_king(board, king_piece)
             filtered_moves = []
             for move in legal_moves:
                 target_piece = board[move[0]][move[1]]
                 if target_piece in (6, 12):
                     continue
 
-                temp_board = self.move_on_copy(
-                    board,
-                    (cell, move),
-                    en_passant_target,
-                    castling_rights,
-                )
-                if not self.is_in_check(color, temp_board):
-                    filtered_moves.append(move)
+                undo = self.make_temporary_move_for_check(board, cell, move, en_passant_target)
+                try:
+                    checked_square = move if piece == king_piece else king_square
+                    if checked_square is None or not self.is_square_attacked(
+                        board,
+                        checked_square[0],
+                        checked_square[1],
+                        attacker_color,
+                    ):
+                        filtered_moves.append(move)
+                finally:
+                    self.unmake_temporary_move_for_check(board, undo)
             legal_moves = filtered_moves
 
         return legal_moves
