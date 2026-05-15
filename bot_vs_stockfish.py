@@ -2,12 +2,12 @@ import importlib.util
 import os
 import random
 import time
-
+import platform
 import chess
 import chess.engine
 import chess.pgn
 
-STOCKFISH_PATH = "stockfish"
+STOCKFISH_PATH = "stockfish" if platform.system() == "Linux" else "stockfish.exe"
 STOCKFISH_TIME = 1.0
 STOCKFISH_MULTIPV = 3
 RANDOM_CP_MARGIN = 10
