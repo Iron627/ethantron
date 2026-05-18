@@ -1,5 +1,6 @@
 from engine import AI_DEPTH, Board
 
+DEFAULT_MOVE_TIME_SECONDS = 1.0
 
 PIECE_TO_INT = {
     "P": 1,
@@ -178,8 +179,8 @@ class UCIEngine:
         remaining = options.get("wtime" if white_to_move else "btime")
         increment = options.get("winc" if white_to_move else "binc", 0)
         if remaining is None:
-            return 10.0
-        return max(0.05, min((remaining / 30.0 + increment * 0.75) / 1000.0, 10.0))
+            return DEFAULT_MOVE_TIME_SECONDS
+        return max(0.05, (remaining / 30.0 + increment * 0.75) / 1000.0)
 
     def handle_go(self, tokens):
         options = self.parse_go(tokens)
