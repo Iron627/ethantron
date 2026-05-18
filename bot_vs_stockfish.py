@@ -96,10 +96,6 @@ def main():
     total_time_taken_by_engine = 0
     engine_module = load_engine_module()
     engine_board = engine_module.Board(None)
-    engine_search_options = engine_module.SearchOptions(
-        max_depth=engine_module.AI_DEPTH,
-        max_time=engine_module.SEARCH_TIME_LIMIT_SECONDS,
-    )
     chess_board = chess.Board()
 
     sf_engine = chess.engine.SimpleEngine.popen_uci(STOCKFISH_PATH)
@@ -136,7 +132,10 @@ def main():
                 print(f"Your engine thinking... It took {time_last_turn:.2f} seconds last turn.")
                 start = time.perf_counter()
 
-                best_move = engine_board.get_best_move(engine_search_options)
+                best_move = engine_board.get_best_move(
+                    engine_module.AI_DEPTH,
+                    engine_module.SEARCH_TIME_LIMIT_SECONDS,
+                )
 
                 time_last_turn = time.perf_counter() - start
                 total_time_taken_by_engine += time_last_turn

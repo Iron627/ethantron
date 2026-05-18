@@ -1,7 +1,6 @@
 import copy
 import random
 import time
-from dataclasses import dataclass
 # Piece Map: 0: empty space, 1: Pawn, 2: Knight, 3: Bishop, 4: Rook, 5: Queen, 6: King
 #            7: Black Pawn, 8: Black Knight, 9: Black Bishop, 10: Black Rook, 11: Black Queen, 12: Black King
 material_values = {0: 0, 1: 100, 2: 320, 3: 330, 4: 500, 5: 900, 6: 0}
@@ -55,10 +54,10 @@ piece_square_tables = {1: [[0, 0, 0, 0, 0, 0, 0, 0],
      [20, 30, 10, 0, 0, 10, 30, 20]]}
 AI_DEPTH = 4
 MATE_SCORE = 1000000
+MATE_SCORE_MARGIN = 10000
 QUIESCENCE_DEPTH = 4
 SEARCH_TIME_LIMIT_SECONDS = 10
 USE_BOARD_STATE = object()
-USE_DEFAULT_SEARCH_OPTION = object()
 TT_EXACT = 0
 TT_LOWERBOUND = 1
 TT_UPPERBOUND = 2
@@ -78,38 +77,25 @@ KING_MISSING_SHIELD_PENALTY = 35
 KING_OPEN_FILE_PENALTY = 18
 KING_SEMI_OPEN_FILE_PENALTY = 9
 
-
-@dataclass(frozen=True)
-class SearchOptions:
-    max_depth: int = AI_DEPTH
-    max_time: float | None = SEARCH_TIME_LIMIT_SECONDS
-
-
-def normalize_search_options(
-    search_options=None,
-    depth=USE_DEFAULT_SEARCH_OPTION,
-    time_limit=USE_DEFAULT_SEARCH_OPTION,
-):
-    if isinstance(search_options, SearchOptions):
-        max_depth = search_options.max_depth
-        max_time = search_options.max_time
-    elif search_options is None:
+def normalize_search_options(search_options=None, depth=None, time_limit=None):
+    if search_options is None:
         max_depth = AI_DEPTH
         max_time = SEARCH_TIME_LIMIT_SECONDS
     else:
         max_depth = search_options
-        if depth is not USE_DEFAULT_SEARCH_OPTION and time_limit is USE_DEFAULT_SEARCH_OPTION:
+        if depth is not None and time_limit is None:
             max_time = depth
-            depth = USE_DEFAULT_SEARCH_OPTION
+            depth = None
         else:
             max_time = SEARCH_TIME_LIMIT_SECONDS
 
-    if depth is not USE_DEFAULT_SEARCH_OPTION:
+    if depth is not None:
         max_depth = depth
-    if time_limit is not USE_DEFAULT_SEARCH_OPTION:
+    if time_limit is not None:
         max_time = time_limit
 
-    return SearchOptions(max(1, int(max_depth)), max_time)
+    max_time = None if max_time is None else float(max_time)
+    return max(1, int(max_depth)), max_time
 
 _zobrist_rng = random.Random(0)
 ZOBRIST_PIECE = [
@@ -123,6 +109,104 @@ ZOBRIST_EN_PASSANT_FILE = [_zobrist_rng.getrandbits(64) for _ in range(8)]
 
 
 OPENING_BOOK = {
+    # Starting position: white to move
+    (
+        "rnbqkbnr"
+        "pppppppp"
+        "........"
+        "........"
+        "........"
+        "........"
+        "PPPPPPPP"
+        "RNBQKBNR",
+        False,
+    ): [
+        (((6, 4), (4, 4)), 40),  # e4
+        (((6, 3), (4, 3)), 35),  # d4
+        (((7, 6), (5, 5)), 15),  # Nf3
+        (((6, 2), (4, 2)), 10),  # c4
+    ],
+
+    # After 1. e4 e5: white to move
+    (
+        "rnbqkbnr"
+        "pppp.ppp"
+        "........"
+        "....p..."
+        "....P..."
+        "........"
+        "PPPP.PPP"
+        "RNBQKBNR",
+        False,
+    ): [
+        (((7, 6), (5, 5)), 60),  # Nf3
+        (((7, 5), (4, 2)), 25),  # Bc4
+        (((6, 3), (4, 3)), 15),  # d4
+    ],
+
+    # After 1. e4 c5: white to move
+    (
+        "rnbqkbnr"
+        "pp.ppppp"
+        "........"
+        "..p....."
+        "....P..."
+        "........"
+        "PPPP.PPP"
+        "RNBQKBNR",
+        False,
+    ): [
+        (((7, 6), (5, 5)), 70),  # Nf3
+        (((6, 3), (4, 3)), 30),  # d4
+    ],
+
+    # After 1. e4 e6: white to move
+    (
+        "rnbqkbnr"
+        "pppp.ppp"
+        "....p..."
+        "........"
+        "....P..."
+        "........"
+        "PPPP.PPP"
+        "RNBQKBNR",
+        False,
+    ): [
+        (((6, 3), (4, 3)), 100),  # d4
+    ],
+
+    # After 1. e4 c6: white to move
+    (
+        "rnbqkbnr"
+        "pp.ppppp"
+        "..p....."
+        "........"
+        "....P..."
+        "........"
+        "PPPP.PPP"
+        "RNBQKBNR",
+        False,
+    ): [
+        (((6, 3), (4, 3)), 100),  # d4
+    ],
+
+    # After 1. d4 d5: white to move
+    (
+        "rnbqkbnr"
+        "ppp.pppp"
+        "........"
+        "...p...."
+        "...P...."
+        "........"
+        "PPP.PPPP"
+        "RNBQKBNR",
+        False,
+    ): [
+        (((6, 2), (4, 2)), 45),  # c4
+        (((7, 2), (4, 5)), 35),  # Bf4
+        (((7, 6), (5, 5)), 20),  # Nf3
+    ],
+
     # After 1. e4: choose e5, Sicilian, French, or Caro-Kann
     (
         "rnbqkbnr"
@@ -312,8 +396,8 @@ def get_material_value(piece):
     return material_values[piece]
 
 def promote_piece_if_needed(piece, row, promotion_choice="queen"):
-    white_promotions = {"queen": 5, "knight": 2}
-    black_promotions = {"queen": 11, "knight": 8}
+    white_promotions = {"queen": 5, "rook": 4, "bishop": 3, "knight": 2}
+    black_promotions = {"queen": 11, "rook": 10, "bishop": 9, "knight": 8}
     if promotion_choice not in white_promotions:
         promotion_choice = "queen"
 
@@ -332,7 +416,7 @@ def normalize_move(move):
 
 def get_promotion_choices(piece, row):
     if (piece == 1 and row == 0) or (piece == 7 and row == 7):
-        return ("queen", "knight")
+        return ("queen", "rook", "bishop", "knight")
     return (None,)
 
 def copy_castling_rights(castling_rights):
@@ -670,14 +754,30 @@ class Board:
                     return row_no, col_no
         return None
 
-    def get_all_moves(self, board, black_turn, en_passant_target=USE_BOARD_STATE, castling_rights=None):
+    def get_all_moves(
+        self,
+        board=None,
+        side_to_move=None,
+        en_passant_target=USE_BOARD_STATE,
+        castling_rights=None,
+    ):
+        if board is None:
+            board = self.board
+        if side_to_move is None:
+            side_to_move = self.turn
+        if en_passant_target is USE_BOARD_STATE:
+            en_passant_target = self.en_passant_target
+        if castling_rights is None:
+            castling_rights = self.castling_rights
+
         moves = []
-        king_square = self.find_king(board, 12 if black_turn else 6)
+        king_square = self.find_king(board, 12 if side_to_move else 6)
+
         for row_no, row in enumerate(board):
             for col_no, piece in enumerate(row):
-                if black_turn and 7 <= piece <= 12:
+                if side_to_move and 7 <= piece <= 12:
                     start = (row_no, col_no)
-                elif not black_turn and 1 <= piece <= 6:
+                elif not side_to_move and 1 <= piece <= 6:
                     start = (row_no, col_no)
                 else:
                     continue
@@ -695,19 +795,21 @@ class Board:
                             moves.append((start, end))
                         else:
                             moves.append((start, end, promotion_choice))
-        return moves
 
-    def check_game_over(self, black_turn):
-        if self.get_all_moves(self.board, black_turn):
+        return moves
+    def check_game_over(self, side_to_move=None):
+        if side_to_move is None:
+            side_to_move = self.turn
+
+        if self.get_all_moves(self.board, side_to_move):
             return False
 
-        color = 'black' if black_turn else 'white'
+        color = 'black' if side_to_move else 'white'
         if self.is_in_check(color, self.board):
-            self.result_text = 'White wins' if black_turn else 'Black wins'
+            self.result_text = 'White wins' if side_to_move else 'Black wins'
         else:
             self.result_text = 'Stalemate'
         return True
-
     def apply_move_to_copy(
         self,
         board,
@@ -764,6 +866,105 @@ class Board:
             new_en_passant_target = None
 
         return new_board, new_en_passant_target, new_castling_rights
+
+
+    def make_search_move(self, board, move, en_passant_target, castling_rights):
+      
+        start, end, promotion_choice = normalize_move(move)
+        if en_passant_target is USE_BOARD_STATE:
+            en_passant_target = self.en_passant_target
+        if castling_rights is None:
+            castling_rights = self.castling_rights
+
+        moving_piece = board[start[0]][start[1]]
+        captured_piece = board[end[0]][end[1]]
+        old_castling_rights = copy_castling_rights(castling_rights)
+        en_passant_capture_square = None
+        en_passant_captured_piece = 0
+        castle_rook_move = None
+
+        is_en_passant_capture = (
+            moving_piece in (1, 7)
+            and en_passant_target == end
+            and start[1] != end[1]
+            and captured_piece == 0
+        )
+        if is_en_passant_capture:
+            en_passant_capture_square = (start[0], end[1])
+            en_passant_captured_piece = board[start[0]][end[1]]
+            board[start[0]][end[1]] = 0
+
+        if moving_piece in (6, 12) and abs(end[1] - start[1]) == 2:
+            row = start[0]
+            if end[1] == 6:
+                castle_rook_move = ((row, 7), (row, 5), board[row][7])
+                board[row][5] = board[row][7]
+                board[row][7] = 0
+            elif end[1] == 2:
+                castle_rook_move = ((row, 0), (row, 3), board[row][0])
+                board[row][3] = board[row][0]
+                board[row][0] = 0
+
+        board[end[0]][end[1]] = promote_piece_if_needed(
+            moving_piece,
+            end[0],
+            promotion_choice or "queen",
+        )
+        board[start[0]][start[1]] = 0
+
+        captured_for_castling = en_passant_captured_piece if is_en_passant_capture else captured_piece
+        self.update_castling_rights_for(
+            castling_rights,
+            start,
+            end,
+            moving_piece,
+            captured_for_castling,
+        )
+
+        if moving_piece in (1, 7) and abs(end[0] - start[0]) == 2:
+            new_en_passant_target = ((start[0] + end[0]) // 2, start[1])
+        else:
+            new_en_passant_target = None
+
+        undo_data = (
+            start,
+            end,
+            moving_piece,
+            captured_piece,
+            en_passant_capture_square,
+            en_passant_captured_piece,
+            castle_rook_move,
+            old_castling_rights,
+        )
+        return new_en_passant_target, undo_data
+
+    def unmake_search_move(self, board, castling_rights, undo_data):
+        (
+            start,
+            end,
+            moving_piece,
+            captured_piece,
+            en_passant_capture_square,
+            en_passant_captured_piece,
+            castle_rook_move,
+            old_castling_rights,
+        ) = undo_data
+
+        board[start[0]][start[1]] = moving_piece
+        board[end[0]][end[1]] = captured_piece
+
+        if en_passant_capture_square is not None:
+            board[en_passant_capture_square[0]][en_passant_capture_square[1]] = en_passant_captured_piece
+
+        if castle_rook_move is not None:
+            rook_start, rook_end, rook_piece = castle_rook_move
+            board[rook_start[0]][rook_start[1]] = rook_piece
+            board[rook_end[0]][rook_end[1]] = 0
+
+        castling_rights['white']['king_side'] = old_castling_rights['white']['king_side']
+        castling_rights['white']['queen_side'] = old_castling_rights['white']['queen_side']
+        castling_rights['black']['king_side'] = old_castling_rights['black']['king_side']
+        castling_rights['black']['queen_side'] = old_castling_rights['black']['queen_side']
 
     def move_on_copy(
         self,
@@ -849,7 +1050,7 @@ class Board:
         depth,
         alpha,
         beta,
-        maximizing,
+        side_to_move,
         en_passant_target=USE_BOARD_STATE,
         castling_rights=None,
         ply=0,
@@ -863,10 +1064,11 @@ class Board:
         if castling_rights is None:
             castling_rights = self.castling_rights
 
-        position_key = hash_position(board, maximizing, en_passant_target, castling_rights)
+        position_key = hash_position(board, side_to_move, en_passant_target, castling_rights)
         tt_entry = self.tt.get(position_key)
         if tt_entry is not None and tt_entry[0] >= depth:
-            _, tt_flag, tt_score, _ = tt_entry
+            tt_flag = tt_entry[1]
+            tt_score = tt_entry[2]
             if tt_flag == TT_EXACT:
                 return tt_score
             if tt_flag == TT_LOWERBOUND:
@@ -879,7 +1081,7 @@ class Board:
         original_alpha = alpha
         original_beta = beta
 
-        color = 'black' if maximizing else 'white'
+        color = 'black' if side_to_move else 'white'
         in_check = self.is_in_check(color, board)
         if depth == 0 and in_check:
             depth = 1
@@ -889,15 +1091,16 @@ class Board:
                 board,
                 alpha,
                 beta,
-                maximizing,
+                side_to_move,
                 en_passant_target,
                 castling_rights,
                 QUIESCENCE_DEPTH,
+                ply,
             )
 
-        if self.can_try_null_move(board, maximizing, depth, in_check, allow_null_move):
+        if self.can_try_null_move(board, side_to_move, depth, in_check, allow_null_move):
             null_depth = depth - 1 - NULL_MOVE_REDUCTION
-            if maximizing:
+            if side_to_move:
                 null_score = self.minimax(
                     board,
                     null_depth,
@@ -926,10 +1129,10 @@ class Board:
                 if null_score <= alpha and not self.is_mating_score(null_score):
                     return null_score
 
-        moves = self.get_all_moves(board, maximizing, en_passant_target, castling_rights)
+        moves = self.get_all_moves(board, side_to_move, en_passant_target, castling_rights)
         if not moves:
             if in_check:
-                return -MATE_SCORE if maximizing else MATE_SCORE
+                return self.mate_score(side_to_move, ply)
             return 0
 
         moves.sort(
@@ -941,26 +1144,29 @@ class Board:
             moves.remove(tt_move)
             moves.insert(0, tt_move)
 
-        if maximizing:
+        if side_to_move:
             best = float('-inf')
             best_move = None
             for move in moves:
-                next_board, next_en_passant, next_castling = self.apply_move_to_copy(
+                next_en_passant, undo = self.make_search_move(
                     board,
                     move,
                     en_passant_target,
                     castling_rights,
                 )
-                score = self.minimax(
-                    next_board,
-                    depth - 1,
-                    alpha,
-                    beta,
-                    False,
-                    next_en_passant,
-                    next_castling,
-                    ply + 1,
-                )
+                try:
+                    score = self.minimax(
+                        board,
+                        depth - 1,
+                        alpha,
+                        beta,
+                        False,
+                        next_en_passant,
+                        castling_rights,
+                        ply + 1,
+                    )
+                finally:
+                    self.unmake_search_move(board, castling_rights, undo)
                 if score > best:
                     best = score
                     best_move = move
@@ -982,22 +1188,25 @@ class Board:
         best = float('inf')
         best_move = None
         for move in moves:
-            next_board, next_en_passant, next_castling = self.apply_move_to_copy(
+            next_en_passant, undo = self.make_search_move(
                 board,
                 move,
                 en_passant_target,
                 castling_rights,
             )
-            score = self.minimax(
-                next_board,
-                depth - 1,
-                alpha,
-                beta,
-                True,
-                next_en_passant,
-                next_castling,
-                ply + 1,
-            )
+            try:
+                score = self.minimax(
+                    board,
+                    depth - 1,
+                    alpha,
+                    beta,
+                    True,
+                    next_en_passant,
+                    castling_rights,
+                    ply + 1,
+                )
+            finally:
+                self.unmake_search_move(board, castling_rights, undo)
             if score < best:
                 best = score
                 best_move = move
@@ -1015,16 +1224,16 @@ class Board:
             tt_flag = TT_EXACT
         self.tt[position_key] = (depth, tt_flag, best, best_move)
         return best
-
     def quiescence(
         self,
         board,
         alpha,
         beta,
-        maximizing,
+        side_to_move,
         en_passant_target=USE_BOARD_STATE,
         castling_rights=None,
         depth=QUIESCENCE_DEPTH,
+        ply=0,
     ):
         if self.search_deadline is not None and time.monotonic() >= self.search_deadline:
             raise TimeoutError
@@ -1034,12 +1243,13 @@ class Board:
         if castling_rights is None:
             castling_rights = self.castling_rights
 
-        position_key = hash_position(board, maximizing, en_passant_target, castling_rights)
+        position_key = hash_position(board, side_to_move, en_passant_target, castling_rights)
         original_alpha = alpha
         original_beta = beta
         tt_entry = self.qtt.get(position_key)
         if tt_entry is not None and tt_entry[0] >= depth:
-            _, tt_flag, tt_score = tt_entry
+            tt_flag = tt_entry[1]
+            tt_score = tt_entry[2]
             if tt_flag == TT_EXACT:
                 return tt_score
             if tt_flag == TT_LOWERBOUND:
@@ -1061,23 +1271,23 @@ class Board:
             self.qtt[position_key] = (depth, tt_flag, score)
             return score
 
-        color = 'black' if maximizing else 'white'
+        color = 'black' if side_to_move else 'white'
         in_check = self.is_in_check(color, board)
 
         if depth <= 0:
             if in_check:
-                moves = self.get_all_moves(board, maximizing, en_passant_target, castling_rights)
+                moves = self.get_all_moves(board, side_to_move, en_passant_target, castling_rights)
                 if not moves:
-                    return store_quiescence_score(-MATE_SCORE if maximizing else MATE_SCORE)
+                    return store_quiescence_score(self.mate_score(side_to_move, ply))
             return store_quiescence_score(self.eval(board))
 
         if in_check:
-            moves = self.get_all_moves(board, maximizing, en_passant_target, castling_rights)
+            moves = self.get_all_moves(board, side_to_move, en_passant_target, castling_rights)
             if not moves:
-                return store_quiescence_score(-MATE_SCORE if maximizing else MATE_SCORE)
+                return store_quiescence_score(self.mate_score(side_to_move, ply))
         else:
             stand_pat = self.eval(board)
-            if maximizing:
+            if side_to_move:
                 if stand_pat >= beta:
                     return store_quiescence_score(stand_pat)
                 alpha = max(alpha, stand_pat)
@@ -1087,7 +1297,7 @@ class Board:
                 beta = min(beta, stand_pat)
 
             moves = [
-                move for move in self.get_all_moves(board, maximizing, en_passant_target, castling_rights)
+                move for move in self.get_all_moves(board, side_to_move, en_passant_target, castling_rights)
                 if self.is_tactical_move(board, move, en_passant_target)
             ]
             if not moves:
@@ -1095,24 +1305,28 @@ class Board:
 
         moves.sort(key=lambda move: self.score_move(board, move, en_passant_target), reverse=True)
 
-        if maximizing:
+        if side_to_move:
             best = float('-inf') if in_check else stand_pat
             for move in moves:
-                next_board, next_en_passant, next_castling = self.apply_move_to_copy(
+                next_en_passant, undo = self.make_search_move(
                     board,
                     move,
                     en_passant_target,
                     castling_rights,
                 )
-                score = self.quiescence(
-                    next_board,
-                    alpha,
-                    beta,
-                    False,
-                    next_en_passant,
-                    next_castling,
-                    depth - 1,
-                )
+                try:
+                    score = self.quiescence(
+                        board,
+                        alpha,
+                        beta,
+                        False,
+                        next_en_passant,
+                        castling_rights,
+                        depth - 1,
+                        ply + 1,
+                    )
+                finally:
+                    self.unmake_search_move(board, castling_rights, undo)
                 best = max(best, score)
                 alpha = max(alpha, best)
                 if beta <= alpha:
@@ -1121,27 +1335,30 @@ class Board:
 
         best = float('inf') if in_check else stand_pat
         for move in moves:
-            next_board, next_en_passant, next_castling = self.apply_move_to_copy(
+            next_en_passant, undo = self.make_search_move(
                 board,
                 move,
                 en_passant_target,
                 castling_rights,
             )
-            score = self.quiescence(
-                next_board,
-                alpha,
-                beta,
-                True,
-                next_en_passant,
-                next_castling,
-                depth - 1,
-            )
+            try:
+                score = self.quiescence(
+                    board,
+                    alpha,
+                    beta,
+                    True,
+                    next_en_passant,
+                    castling_rights,
+                    depth - 1,
+                    ply + 1,
+                )
+            finally:
+                self.unmake_search_move(board, castling_rights, undo)
             best = min(best, score)
             beta = min(beta, best)
             if beta <= alpha:
                 break
         return store_quiescence_score(best)
-
     def is_tactical_move(self, board, move, en_passant_target=None):
         start, end, promotion_choice = normalize_move(move)
         moving_piece = board[start[0]][start[1]]
@@ -1160,24 +1377,29 @@ class Board:
     def is_quiet_move(self, board, move, en_passant_target=None):
         return not self.is_tactical_move(board, move, en_passant_target)
 
-    def has_non_pawn_material(self, board, black_turn):
-        material_pieces = range(8, 12) if black_turn else range(2, 6)
+    def has_non_pawn_material(self, board, side_to_move):
+        material_pieces = range(8, 12) if side_to_move else range(2, 6)
         for row in board:
             for piece in row:
                 if piece in material_pieces:
                     return True
         return False
-
-    def can_try_null_move(self, board, maximizing, depth, in_check, allow_null_move):
+    def can_try_null_move(self, board, side_to_move, depth, in_check, allow_null_move):
         return (
             allow_null_move
             and depth >= NULL_MOVE_MIN_DEPTH
             and not in_check
-            and self.has_non_pawn_material(board, maximizing)
+            and self.has_non_pawn_material(board, side_to_move)
         )
 
+    def mate_score(self, side_to_move, ply):
+        # If the side to move has no legal moves while in check, that side is
+        # checkmated. Scores are adjusted by ply so the engine prefers faster
+        # mates and delays unavoidable losses.
+        return (-MATE_SCORE + ply) if side_to_move else (MATE_SCORE - ply)
+
     def is_mating_score(self, score):
-        return abs(score) >= MATE_SCORE
+        return abs(score) >= MATE_SCORE - MATE_SCORE_MARGIN
 
     def history_move_key(self, board, move):
         start, end, _ = normalize_move(move)
@@ -1229,10 +1451,14 @@ class Board:
             score += 10 * get_material_value(captured_piece)
             score -= get_material_value(moving_piece)
 
-        if promotion_choice == "queen":
-            score += get_material_value(5)
-        elif promotion_choice == "knight":
-            score += get_material_value(2)
+        if promotion_choice is not None:
+            promotion_values = {
+                "queen": get_material_value(5),
+                "rook": get_material_value(4),
+                "bishop": get_material_value(3),
+                "knight": get_material_value(2),
+            }
+            score += promotion_values.get(promotion_choice, get_material_value(5))
 
         if end in ((3, 3), (3, 4), (4, 3), (4, 4)):
             score += 10
@@ -1260,14 +1486,18 @@ class Board:
         for row in self.board:
             for piece in row:
                 chars.append(piece_map[piece])
-        return "".join(chars), True
-
+        return "".join(chars), self.turn
     def get_book_move(self):
         entries = OPENING_BOOK.get(self.board_to_book_key())
         if entries is None:
             return None
 
-        legal_moves = self.get_all_moves(self.board, True, self.en_passant_target, self.castling_rights)
+        legal_moves = self.get_all_moves(
+            self.board,
+            self.turn,
+            self.en_passant_target,
+            self.castling_rights,
+        )
         legal_entries = [(move, weight) for move, weight in entries if move in legal_moves]
         if not legal_entries:
             return None
@@ -1280,30 +1510,35 @@ class Board:
             if choice <= current:
                 return move
         return legal_entries[-1][0]
+    def get_best_move(self, depth=AI_DEPTH, time_limit=SEARCH_TIME_LIMIT_SECONDS, use_opening_book=True):
+        side_to_move = self.turn
+        max_depth, max_time = normalize_search_options(None, depth, time_limit)
 
-    def get_best_move(
-        self,
-        search_options=None,
-        depth=USE_DEFAULT_SEARCH_OPTION,
-        time_limit=USE_DEFAULT_SEARCH_OPTION,
-    ):
-        search_options = normalize_search_options(search_options, depth, time_limit)
-        book_move = self.get_book_move()
-        if book_move is not None:
-            return book_move
+        if use_opening_book:
+            book_move = self.get_book_move()
+            if book_move is not None:
+                return book_move
 
-        moves = self.get_all_moves(self.board, True, self.en_passant_target, self.castling_rights)
+        moves = self.get_all_moves(
+            self.board,
+            side_to_move,
+            self.en_passant_target,
+            self.castling_rights,
+        )
         if not moves:
             return None
 
+        # eval() is positive for black and negative for white.
+        # Therefore black maximizes and white minimizes.
         best_move = moves[0]
         self.search_deadline = (
-            time.monotonic() + search_options.max_time
-            if search_options.max_time is not None
+            time.monotonic() + max_time
+            if max_time is not None
             else None
         )
+
         try:
-            for current_depth in range(1, search_options.max_depth + 1):
+            for current_depth in range(1, max_depth + 1):
                 if self.search_deadline is not None and time.monotonic() >= self.search_deadline:
                     raise TimeoutError
 
@@ -1322,45 +1557,63 @@ class Board:
                     moves.insert(0, best_move)
 
                 iteration_best_move = None
-                iteration_best_score = float('-inf')
+                iteration_best_score = float('-inf') if side_to_move else float('inf')
+
                 for move in moves:
                     if self.search_deadline is not None and time.monotonic() >= self.search_deadline:
                         raise TimeoutError
 
-                    board_after_move, en_passant_after_move, castling_after_move = self.apply_move_to_copy(
+                    en_passant_after_move, undo = self.make_search_move(
                         self.board,
                         move,
                         self.en_passant_target,
                         self.castling_rights,
                     )
-                    score = self.minimax(
-                        board_after_move,
-                        current_depth - 1,
-                        float('-inf'),
-                        float('inf'),
-                        False,
-                        en_passant_after_move,
-                        castling_after_move,
-                        1,
-                    )
-                    if score > iteration_best_score:
-                        iteration_best_score = score
-                        iteration_best_move = move
+                    try:
+                        score = self.minimax(
+                            self.board,
+                            current_depth - 1,
+                            float('-inf'),
+                            float('inf'),
+                            not side_to_move,
+                            en_passant_after_move,
+                            self.castling_rights,
+                            1,
+                        )
+                    finally:
+                        self.unmake_search_move(self.board, self.castling_rights, undo)
+
+                    if side_to_move:
+                        if score > iteration_best_score:
+                            iteration_best_score = score
+                            iteration_best_move = move
+                    else:
+                        if score < iteration_best_score:
+                            iteration_best_score = score
+                            iteration_best_move = move
 
                 if iteration_best_move is not None:
                     best_move = iteration_best_move
+
         except TimeoutError:
             pass
         finally:
             self.search_deadline = None
 
         return best_move
-
     def is_promotion_move(self, start, end):
         moving_piece = self.get_piece(start, self.board)
         return (moving_piece == 1 and end[0] == 0) or (moving_piece == 7 and end[0] == 7)
 
-    def move_piece(self,i,f,promotion_choice="queen"):
+    def move_piece(
+        self,
+        i,
+        f,
+        promotion_choice="queen",
+        *,
+        switch_turn=True,
+        update_game_status=True,
+    ):
         moving_piece = self.get_piece(i, self.board)
         captured_piece = self.get_piece(f, self.board)
 
@@ -1392,6 +1645,11 @@ class Board:
             self.en_passant_target = ((i[0] + f[0]) // 2, i[1])
         else:
             self.en_passant_target = None
+
+        if switch_turn:
+            self.turn = not self.turn
+            if update_game_status:
+                self.check_game_over(self.turn)
 
     def update_castling_rights(self, start, end, moving_piece, captured_piece):
         self.update_castling_rights_for(
@@ -1639,10 +1897,125 @@ class Board:
             legal_moves = filtered_moves
 
         return legal_moves
-            
-def calculate_ai_move(board_state, en_passant_target, castling_rights, search_options=None):
+    def _perft_from_position(
+        self,
+        board,
+        depth,
+        side_to_move,
+        en_passant_target,
+        castling_rights,
+    ):
+        if depth == 0:
+            return 1
+
+        total = 0
+        moves = self.get_all_moves(
+            board,
+            side_to_move,
+            en_passant_target,
+            castling_rights,
+        )
+
+        for move in moves:
+            new_board, new_en_passant, new_castling = self.apply_move_to_copy(
+                board,
+                move,
+                en_passant_target,
+                castling_rights,
+            )
+
+            total += self._perft_from_position(
+                new_board,
+                depth - 1,
+                not side_to_move,
+                new_en_passant,
+                new_castling,
+            )
+
+        return total
+
+    def perft(
+        self,
+        board=None,
+        depth=1,
+        en_passant_target=USE_BOARD_STATE,
+        castling_rights=None,
+    ):
+        if board is None:
+            board = self.board
+
+        if en_passant_target is USE_BOARD_STATE:
+            en_passant_target = self.en_passant_target
+
+        if castling_rights is None:
+            castling_rights = self.castling_rights
+
+        return self._perft_from_position(
+            board,
+            depth,
+            self.turn,
+            en_passant_target,
+            castling_rights,
+        )
+
+    def perft_divide(
+        self,
+        board=None,
+        depth=1,
+        en_passant_target=USE_BOARD_STATE,
+        castling_rights=None,
+    ):
+        if board is None:
+            board = self.board
+
+        if en_passant_target is USE_BOARD_STATE:
+            en_passant_target = self.en_passant_target
+
+        if castling_rights is None:
+            castling_rights = self.castling_rights
+
+        results = {}
+        moves = self.get_all_moves(
+            board,
+            self.turn,
+            en_passant_target,
+            castling_rights,
+        )
+
+        for move in moves:
+            new_board, new_en_passant, new_castling = self.apply_move_to_copy(
+                board,
+                move,
+                en_passant_target,
+                castling_rights,
+            )
+
+            results[move] = self._perft_from_position(
+                new_board,
+                depth - 1,
+                not self.turn,
+                new_en_passant,
+                new_castling,
+            )
+
+        return results
+
+def calculate_ai_move(
+    board_state,
+    en_passant_target,
+    castling_rights,
+    depth=AI_DEPTH,
+    time_limit=SEARCH_TIME_LIMIT_SECONDS,
+    turn=False,
+    use_opening_book=True,
+):
     worker_board = Board(None)
     worker_board.board = [row[:] for row in board_state]
     worker_board.en_passant_target = en_passant_target
     worker_board.castling_rights = copy.deepcopy(castling_rights)
-    return worker_board.get_best_move(search_options)
+    worker_board.turn = turn
+    return worker_board.get_best_move(
+        depth,
+        time_limit,
+        use_opening_book=use_opening_book,
+    )

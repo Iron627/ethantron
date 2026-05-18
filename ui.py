@@ -19,10 +19,8 @@ HIGHLIGHT = (255, 210, 84,50)
 SELECTED_HIGHLIGHT = (80, 170, 255, 90)
 ai_executor = ThreadPoolExecutor(max_workers=1)
 ai_future = None
-AI_SEARCH_OPTIONS = SearchOptions(
-    max_depth=AI_DEPTH,
-    max_time=SEARCH_TIME_LIMIT_SECONDS,
-)
+AI_DEPTH_SETTING = AI_DEPTH
+AI_TIME_LIMIT_SECONDS = SEARCH_TIME_LIMIT_SECONDS
 piece_imgs = {}
 
 
@@ -120,7 +118,6 @@ def main():
                     game_board.pending_promotion = None
                     game_board.selected = None
                     game_board.selected_legal_moves = []
-                    game_board.turn = not game_board.turn
                 continue
             if event.type == pygame.MOUSEBUTTONDOWN and game_board.result_text is None:
                 if not game_board.turn:
@@ -150,11 +147,10 @@ def main():
                                 game_board.move_piece(picked_cell, mouse_cell)
                                 game_board.selected = None
                                 game_board.selected_legal_moves = []
-                                game_board.turn = not game_board.turn
 
         if game_board.turn and game_board.result_text is None:
             if ai_future is None:
-                if not game_board.check_game_over(True):
+                if not game_board.check_game_over(game_board.turn):
                     timer = time.perf_counter()
                     board_snapshot = [row[:] for row in game_board.board]
                     en_passant_snapshot = game_board.en_passant_target
@@ -164,7 +160,9 @@ def main():
                         board_snapshot,
                         en_passant_snapshot,
                         castling_snapshot,
-                        AI_SEARCH_OPTIONS,
+                        AI_DEPTH_SETTING,
+                        AI_TIME_LIMIT_SECONDS,
+                        game_board.turn,
                     )
             elif ai_future.done():
                 move = ai_future.result()
@@ -172,8 +170,6 @@ def main():
                 if move is not None:
                     start, end, promotion_choice = normalize_move(move)
                     game_board.move_piece(start, end, promotion_choice or "queen")
-                    game_board.turn = not game_board.turn
-                    game_board.check_game_over(False)
                     timer = time.perf_counter() - timer
                     print(f"AI move calculated in {timer:.2f} seconds")
 
