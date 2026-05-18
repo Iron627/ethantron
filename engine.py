@@ -1,6 +1,7 @@
 import copy
 import random
 import time
+from dataclasses import dataclass
 # Piece Map: 0: empty space, 1: Pawn, 2: Knight, 3: Bishop, 4: Rook, 5: Queen, 6: King
 #            7: Black Pawn, 8: Black Knight, 9: Black Bishop, 10: Black Rook, 11: Black Queen, 12: Black King
 material_values = {0: 0, 1: 100, 2: 320, 3: 330, 4: 500, 5: 900, 6: 0}
@@ -57,6 +58,7 @@ MATE_SCORE = 1000000
 QUIESCENCE_DEPTH = 4
 SEARCH_TIME_LIMIT_SECONDS = 10
 USE_BOARD_STATE = object()
+USE_DEFAULT_SEARCH_OPTION = object()
 TT_EXACT = 0
 TT_LOWERBOUND = 1
 TT_UPPERBOUND = 2
@@ -75,6 +77,39 @@ ROOK_SEVENTH_RANK_BONUS = 20
 KING_MISSING_SHIELD_PENALTY = 35
 KING_OPEN_FILE_PENALTY = 18
 KING_SEMI_OPEN_FILE_PENALTY = 9
+
+
+@dataclass(frozen=True)
+class SearchOptions:
+    max_depth: int = AI_DEPTH
+    max_time: float | None = SEARCH_TIME_LIMIT_SECONDS
+
+
+def normalize_search_options(
+    search_options=None,
+    depth=USE_DEFAULT_SEARCH_OPTION,
+    time_limit=USE_DEFAULT_SEARCH_OPTION,
+):
+    if isinstance(search_options, SearchOptions):
+        max_depth = search_options.max_depth
+        max_time = search_options.max_time
+    elif search_options is None:
+        max_depth = AI_DEPTH
+        max_time = SEARCH_TIME_LIMIT_SECONDS
+    else:
+        max_depth = search_options
+        if depth is not USE_DEFAULT_SEARCH_OPTION and time_limit is USE_DEFAULT_SEARCH_OPTION:
+            max_time = depth
+            depth = USE_DEFAULT_SEARCH_OPTION
+        else:
+            max_time = SEARCH_TIME_LIMIT_SECONDS
+
+    if depth is not USE_DEFAULT_SEARCH_OPTION:
+        max_depth = depth
+    if time_limit is not USE_DEFAULT_SEARCH_OPTION:
+        max_time = time_limit
+
+    return SearchOptions(max(1, int(max_depth)), max_time)
 
 _zobrist_rng = random.Random(0)
 ZOBRIST_PIECE = [
@@ -1246,44 +1281,74 @@ class Board:
                 return move
         return legal_entries[-1][0]
 
-    def get_best_move(self, depth=AI_DEPTH, time_limit=SEARCH_TIME_LIMIT_SECONDS):
+    def get_best_move(
+        self,
+        search_options=None,
+        depth=USE_DEFAULT_SEARCH_OPTION,
+        time_limit=USE_DEFAULT_SEARCH_OPTION,
+    ):
+        search_options = normalize_search_options(search_options, depth, time_limit)
         book_move = self.get_book_move()
         if book_move is not None:
             return book_move
 
-        best_move = None
-        best_score = float('-inf')
         moves = self.get_all_moves(self.board, True, self.en_passant_target, self.castling_rights)
-        moves.sort(
-            key=lambda move: self.order_move_score(self.board, move, depth, 0, self.en_passant_target),
-            reverse=True,
+        if not moves:
+            return None
+
+        best_move = moves[0]
+        self.search_deadline = (
+            time.monotonic() + search_options.max_time
+            if search_options.max_time is not None
+            else None
         )
-
-        self.search_deadline = time.monotonic() + time_limit if time_limit is not None else None
         try:
-            for move in moves:
+            for current_depth in range(1, search_options.max_depth + 1):
                 if self.search_deadline is not None and time.monotonic() >= self.search_deadline:
-                    break
+                    raise TimeoutError
 
-                board_after_move, en_passant_after_move, castling_after_move = self.apply_move_to_copy(
-                    self.board,
-                    move,
-                    self.en_passant_target,
-                    self.castling_rights,
+                moves.sort(
+                    key=lambda move: self.order_move_score(
+                        self.board,
+                        move,
+                        current_depth,
+                        0,
+                        self.en_passant_target,
+                    ),
+                    reverse=True,
                 )
-                score = self.minimax(
-                    board_after_move,
-                    depth - 1,
-                    float('-inf'),
-                    float('inf'),
-                    False,
-                    en_passant_after_move,
-                    castling_after_move,
-                    1,
-                )
-                if score > best_score:
-                    best_score = score
-                    best_move = move
+                if best_move in moves:
+                    moves.remove(best_move)
+                    moves.insert(0, best_move)
+
+                iteration_best_move = None
+                iteration_best_score = float('-inf')
+                for move in moves:
+                    if self.search_deadline is not None and time.monotonic() >= self.search_deadline:
+                        raise TimeoutError
+
+                    board_after_move, en_passant_after_move, castling_after_move = self.apply_move_to_copy(
+                        self.board,
+                        move,
+                        self.en_passant_target,
+                        self.castling_rights,
+                    )
+                    score = self.minimax(
+                        board_after_move,
+                        current_depth - 1,
+                        float('-inf'),
+                        float('inf'),
+                        False,
+                        en_passant_after_move,
+                        castling_after_move,
+                        1,
+                    )
+                    if score > iteration_best_score:
+                        iteration_best_score = score
+                        iteration_best_move = move
+
+                if iteration_best_move is not None:
+                    best_move = iteration_best_move
         except TimeoutError:
             pass
         finally:
@@ -1575,9 +1640,9 @@ class Board:
 
         return legal_moves
             
-def calculate_ai_move(board_state, en_passant_target, castling_rights):
+def calculate_ai_move(board_state, en_passant_target, castling_rights, search_options=None):
     worker_board = Board(None)
     worker_board.board = [row[:] for row in board_state]
     worker_board.en_passant_target = en_passant_target
     worker_board.castling_rights = copy.deepcopy(castling_rights)
-    return worker_board.get_best_move()
+    return worker_board.get_best_move(search_options)

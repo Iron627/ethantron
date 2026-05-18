@@ -19,6 +19,10 @@ HIGHLIGHT = (255, 210, 84,50)
 SELECTED_HIGHLIGHT = (80, 170, 255, 90)
 ai_executor = ThreadPoolExecutor(max_workers=1)
 ai_future = None
+AI_SEARCH_OPTIONS = SearchOptions(
+    max_depth=AI_DEPTH,
+    max_time=SEARCH_TIME_LIMIT_SECONDS,
+)
 piece_imgs = {}
 
 
@@ -160,6 +164,7 @@ def main():
                         board_snapshot,
                         en_passant_snapshot,
                         castling_snapshot,
+                        AI_SEARCH_OPTIONS,
                     )
             elif ai_future.done():
                 move = ai_future.result()
