@@ -63,6 +63,8 @@ TT_UPPERBOUND = 2
 TT_MAX_ENTRIES = 500000
 KILLER_MOVE_PRIMARY_BONUS = 1000
 KILLER_MOVE_SECONDARY_BONUS = 900
+NULL_MOVE_REDUCTION = 2
+NULL_MOVE_MIN_DEPTH = NULL_MOVE_REDUCTION + 1
 
 _zobrist_rng = random.Random(0)
 ZOBRIST_PIECE = [
@@ -509,6 +511,7 @@ class Board:
         en_passant_target=USE_BOARD_STATE,
         castling_rights=None,
         ply=0,
+        allow_null_move=True,
     ):
         if self.search_deadline is not None and time.monotonic() >= self.search_deadline:
             raise TimeoutError
@@ -549,6 +552,37 @@ class Board:
                 castling_rights,
                 QUIESCENCE_DEPTH,
             )
+
+        if self.can_try_null_move(board, maximizing, depth, in_check, allow_null_move):
+            null_depth = depth - 1 - NULL_MOVE_REDUCTION
+            if maximizing:
+                null_score = self.minimax(
+                    board,
+                    null_depth,
+                    beta - 1,
+                    beta,
+                    False,
+                    None,
+                    castling_rights,
+                    ply + 1,
+                    False,
+                )
+                if null_score >= beta and not self.is_mating_score(null_score):
+                    return null_score
+            else:
+                null_score = self.minimax(
+                    board,
+                    null_depth,
+                    alpha,
+                    alpha + 1,
+                    True,
+                    None,
+                    castling_rights,
+                    ply + 1,
+                    False,
+                )
+                if null_score <= alpha and not self.is_mating_score(null_score):
+                    return null_score
 
         moves = self.get_all_moves(board, maximizing, en_passant_target, castling_rights)
         if not moves:
@@ -783,6 +817,25 @@ class Board:
 
     def is_quiet_move(self, board, move, en_passant_target=None):
         return not self.is_tactical_move(board, move, en_passant_target)
+
+    def has_non_pawn_material(self, board, black_turn):
+        material_pieces = range(8, 12) if black_turn else range(2, 6)
+        for row in board:
+            for piece in row:
+                if piece in material_pieces:
+                    return True
+        return False
+
+    def can_try_null_move(self, board, maximizing, depth, in_check, allow_null_move):
+        return (
+            allow_null_move
+            and depth >= NULL_MOVE_MIN_DEPTH
+            and not in_check
+            and self.has_non_pawn_material(board, maximizing)
+        )
+
+    def is_mating_score(self, score):
+        return abs(score) >= MATE_SCORE
 
     def history_move_key(self, board, move):
         start, end, _ = normalize_move(move)
