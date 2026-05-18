@@ -163,7 +163,7 @@ class UCIEngine:
         i = 1
         while i < len(tokens):
             key = tokens[i]
-            if key in {"wtime", "btime", "winc", "binc"} and i + 1 < len(tokens):
+            if key in {"wtime", "btime", "winc", "binc", "depth"} and i + 1 < len(tokens):
                 try:
                     options[key] = int(tokens[i + 1])
                 except ValueError:
@@ -184,13 +184,14 @@ class UCIEngine:
     def handle_go(self, tokens):
         options = self.parse_go(tokens)
         time_limit = self.choose_time_limit(options)
+        search_depth = max(1, options["depth"]) if "depth" in options else 99
         def emit_info(depth, score_cp, best_move, nodes, time_ms, nps):
             pv = self.move_to_uci(best_move)
             self.out(
                 f"info depth {depth} seldepth {depth} time {time_ms} nodes {nodes} nps {nps} score cp {score_cp} pv {pv}"
             )
 
-        best_move = self.board.get_best_move(depth=AI_DEPTH, time_limit=time_limit, info_callback=emit_info)
+        best_move = self.board.get_best_move(depth=search_depth, time_limit=time_limit, info_callback=emit_info)
         best_move_uci = self.move_to_uci(best_move)
         self.out(f"bestmove {best_move_uci}")
 
