@@ -529,6 +529,11 @@ class Board:
         original_alpha = alpha
         original_beta = beta
 
+        color = 'black' if maximizing else 'white'
+        in_check = self.is_in_check(color, board)
+        if depth == 0 and in_check:
+            depth = 1
+
         if depth == 0:
             return self.quiescence(
                 board,
@@ -542,8 +547,7 @@ class Board:
 
         moves = self.get_all_moves(board, maximizing, en_passant_target, castling_rights)
         if not moves:
-            color = 'black' if maximizing else 'white'
-            if self.is_in_check(color, board):
+            if in_check:
                 return -MATE_SCORE if maximizing else MATE_SCORE
             return 0
 
