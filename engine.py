@@ -220,6 +220,49 @@ class Board:
         self.search_deadline = None
         self.search_nodes = 0
         self.search_start_time = 0.0
+        self.position_counts = {}
+        self.reset_position_history()
+
+    def position_key(
+        self,
+        board=None,
+        side_to_move=None,
+        en_passant_target=USE_BOARD_STATE,
+        castling_rights=None,
+    ):
+        if board is None:
+            board = self.board
+        if side_to_move is None:
+            side_to_move = self.turn
+        if en_passant_target is USE_BOARD_STATE:
+            en_passant_target = self.en_passant_target
+        if castling_rights is None:
+            castling_rights = self.castling_rights
+        return hash_position(board, side_to_move, en_passant_target, castling_rights)
+
+    def reset_position_history(self):
+        self.position_counts = {}
+        key = self.position_key()
+        self.position_counts[key] = 1
+
+    def record_current_position(self):
+        key = self.position_key()
+        self.position_counts[key] = self.position_counts.get(key, 0) + 1
+
+    def is_threefold_repetition_move(self, move, side_to_move, en_passant_target, castling_rights):
+        next_board, next_en_passant, next_castling = self.apply_move_to_copy(
+            self.board,
+            move,
+            en_passant_target,
+            castling_rights,
+        )
+        next_key = self.position_key(
+            next_board,
+            not side_to_move,
+            next_en_passant,
+            next_castling,
+        )
+        return self.position_counts.get(next_key, 0) >= 2
 
     def is_square_attacked(self, board, row, col, attacker_color):
         if attacker_color == 'black':
@@ -1233,6 +1276,19 @@ class Board:
         if not moves:
             return None
 
+        non_repetition_moves = [
+            move
+            for move in moves
+            if not self.is_threefold_repetition_move(
+                move,
+                side_to_move,
+                self.en_passant_target,
+                self.castling_rights,
+            )
+        ]
+        if non_repetition_moves:
+            moves = non_repetition_moves
+
         # eval() is positive for black and negative for white.
         # Therefore black maximizes and white minimizes.
         best_move = moves[0]
@@ -1369,6 +1425,7 @@ class Board:
 
         if switch_turn:
             self.turn = not self.turn
+            self.record_current_position()
             if update_game_status:
                 self.check_game_over(self.turn)
 

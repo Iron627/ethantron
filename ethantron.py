@@ -134,6 +134,7 @@ class UCIEngine:
         self.board.qtt = {}
         self.board.killer_moves = {}
         self.board.history_moves = {}
+        self.board.reset_position_history()
 
     def handle_position(self, tokens):
         if len(tokens) < 2:
