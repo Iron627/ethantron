@@ -93,7 +93,7 @@ def get_stockfish_move(sf_engine, board):
 
 def main():
     global time_last_turn
-
+    total_time_taken_by_engine = 0
     engine_module = load_engine_module()
     engine_board = engine_module.Board(None)
     chess_board = chess.Board()
@@ -135,7 +135,7 @@ def main():
                 best_move = engine_board.get_best_move()
 
                 time_last_turn = time.perf_counter() - start
-
+                total_time_taken_by_engine += time_last_turn
                 if best_move is None:
                     print("Engine has no legal move.")
                     break
@@ -170,7 +170,7 @@ def main():
 
     print("\nPGN:")
     print(game)
-
+    print(f"Your engine took {total_time_taken_by_engine:.2f}s in total.")
 
 if __name__ == "__main__":
     main()
