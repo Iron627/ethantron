@@ -184,8 +184,15 @@ class UCIEngine:
     def handle_go(self, tokens):
         options = self.parse_go(tokens)
         time_limit = self.choose_time_limit(options)
-        best_move = self.board.get_best_move(depth=AI_DEPTH, time_limit=time_limit)
-        self.out(f"bestmove {self.move_to_uci(best_move)}")
+        def emit_info(depth, score_cp, best_move, nodes, time_ms, nps):
+            pv = self.move_to_uci(best_move)
+            self.out(
+                f"info depth {depth} seldepth {depth} time {time_ms} nodes {nodes} nps {nps} score cp {score_cp} pv {pv}"
+            )
+
+        best_move = self.board.get_best_move(depth=AI_DEPTH, time_limit=time_limit, info_callback=emit_info)
+        best_move_uci = self.move_to_uci(best_move)
+        self.out(f"bestmove {best_move_uci}")
 
     def loop(self):
         while True:

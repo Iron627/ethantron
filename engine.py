@@ -218,6 +218,8 @@ class Board:
         self.killer_moves = {}
         self.history_moves = {}
         self.search_deadline = None
+        self.search_nodes = 0
+        self.search_start_time = 0.0
 
     def is_square_attacked(self, board, row, col, attacker_color):
         if attacker_color == 'black':
@@ -806,6 +808,7 @@ class Board:
         ply=0,
         allow_null_move=True,
     ):
+        self.search_nodes += 1
         if self.search_deadline is not None and time.monotonic() >= self.search_deadline:
             raise TimeoutError
 
@@ -985,6 +988,7 @@ class Board:
         depth=QUIESCENCE_DEPTH,
         ply=0,
     ):
+        self.search_nodes += 1
         if self.search_deadline is not None and time.monotonic() >= self.search_deadline:
             raise TimeoutError
 
@@ -1216,7 +1220,7 @@ class Board:
         return score
 
 
-    def get_best_move(self, depth=AI_DEPTH, time_limit=SEARCH_TIME_LIMIT_SECONDS):
+    def get_best_move(self, depth=AI_DEPTH, time_limit=SEARCH_TIME_LIMIT_SECONDS, info_callback=None):
         side_to_move = self.turn
         max_depth, max_time = normalize_search_options(None, depth, time_limit)
 
@@ -1232,8 +1236,11 @@ class Board:
         # eval() is positive for black and negative for white.
         # Therefore black maximizes and white minimizes.
         best_move = moves[0]
+        best_score = 0
+        self.search_nodes = 0
+        self.search_start_time = time.monotonic()
         self.search_deadline = (
-            time.monotonic() + max_time
+            self.search_start_time + max_time
             if max_time is not None
             else None
         )
@@ -1295,6 +1302,19 @@ class Board:
 
                 if iteration_best_move is not None:
                     best_move = iteration_best_move
+                    best_score = iteration_best_score
+                    if info_callback is not None:
+                        elapsed_ms = max(1, int((time.monotonic() - self.search_start_time) * 1000))
+                        score_cp = int(best_score if side_to_move else -best_score)
+                        nps = int((self.search_nodes * 1000) / elapsed_ms)
+                        info_callback(
+                            current_depth,
+                            score_cp,
+                            best_move,
+                            self.search_nodes,
+                            elapsed_ms,
+                            nps,
+                        )
 
         except TimeoutError:
             pass
