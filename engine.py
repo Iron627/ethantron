@@ -65,6 +65,16 @@ KILLER_MOVE_PRIMARY_BONUS = 1000
 KILLER_MOVE_SECONDARY_BONUS = 900
 NULL_MOVE_REDUCTION = 2
 NULL_MOVE_MIN_DEPTH = NULL_MOVE_REDUCTION + 1
+PASSED_PAWN_BASE_BONUS = 20
+PASSED_PAWN_ADVANCE_BONUS = 8
+DOUBLED_PAWN_PENALTY = 18
+ISOLATED_PAWN_PENALTY = 12
+ROOK_OPEN_FILE_BONUS = 25
+ROOK_SEMI_OPEN_FILE_BONUS = 12
+ROOK_SEVENTH_RANK_BONUS = 20
+KING_MISSING_SHIELD_PENALTY = 35
+KING_OPEN_FILE_PENALTY = 18
+KING_SEMI_OPEN_FILE_PENALTY = 9
 
 _zobrist_rng = random.Random(0)
 ZOBRIST_PIECE = [
@@ -281,21 +291,165 @@ class Board:
         eval_table = EVAL_TABLE
         white_bishops = 0
         black_bishops = 0
+        white_pawn_files = [0 for _ in range(8)]
+        black_pawn_files = [0 for _ in range(8)]
+        white_pawns = []
+        black_pawns = []
+        white_rooks = []
+        black_rooks = []
+        white_king_square = None
+        black_king_square = None
         for row_no in range(8):
             row = board[row_no]
             for col_no in range(8):
                 piece = row[col_no]
                 score += eval_table[row[col_no]][row_no][col_no]
-                if piece == 3:
+                if piece == 1:
+                    white_pawn_files[col_no] += 1
+                    white_pawns.append((row_no, col_no))
+                elif piece == 7:
+                    black_pawn_files[col_no] += 1
+                    black_pawns.append((row_no, col_no))
+                elif piece == 3:
                     white_bishops += 1
                 elif piece == 9:
                     black_bishops += 1
+                elif piece == 4:
+                    white_rooks.append((row_no, col_no))
+                elif piece == 10:
+                    black_rooks.append((row_no, col_no))
+                elif piece == 6:
+                    white_king_square = (row_no, col_no)
+                elif piece == 12:
+                    black_king_square = (row_no, col_no)
         if white_bishops >= 2:
             score -= 30
         if black_bishops >= 2:
             score += 30
-        score += self.evaluate_king_safety(board)
+        score += self.evaluate_position_features(
+            board,
+            white_pawn_files,
+            black_pawn_files,
+            white_pawns,
+            black_pawns,
+            white_rooks,
+            black_rooks,
+            white_king_square,
+            black_king_square,
+        )
         return score
+
+    def evaluate_position_features(
+        self,
+        board,
+        white_pawn_files,
+        black_pawn_files,
+        white_pawns,
+        black_pawns,
+        white_rooks,
+        black_rooks,
+        white_king_square,
+        black_king_square,
+    ):
+        score = 0
+        score -= self.evaluate_pawn_features(
+            white_pawns,
+            white_pawn_files,
+            black_pawns,
+            True,
+        )
+        score += self.evaluate_pawn_features(
+            black_pawns,
+            black_pawn_files,
+            white_pawns,
+            False,
+        )
+        score -= self.evaluate_rook_activity(white_rooks, white_pawn_files, black_pawn_files, True)
+        score += self.evaluate_rook_activity(black_rooks, black_pawn_files, white_pawn_files, False)
+        score += self.king_safety_penalty_from_features(
+            board,
+            white_king_square,
+            'white',
+            white_pawn_files,
+            black_pawn_files,
+        )
+        score -= self.king_safety_penalty_from_features(
+            board,
+            black_king_square,
+            'black',
+            black_pawn_files,
+            white_pawn_files,
+        )
+        return score
+
+    def evaluate_pawn_features(self, pawns, friendly_files, enemy_pawns, white):
+        score = 0
+        for file_no, pawn_count in enumerate(friendly_files):
+            if pawn_count > 1:
+                score -= DOUBLED_PAWN_PENALTY * (pawn_count - 1)
+            if pawn_count > 0:
+                has_left_neighbor = file_no > 0 and friendly_files[file_no - 1] > 0
+                has_right_neighbor = file_no < 7 and friendly_files[file_no + 1] > 0
+                if not has_left_neighbor and not has_right_neighbor:
+                    score -= ISOLATED_PAWN_PENALTY * pawn_count
+
+        for row, col in pawns:
+            passed = True
+            for enemy_row, enemy_col in enemy_pawns:
+                if abs(enemy_col - col) > 1:
+                    continue
+                if white and enemy_row < row:
+                    passed = False
+                    break
+                if not white and enemy_row > row:
+                    passed = False
+                    break
+            if passed:
+                advancement = 6 - row if white else row - 1
+                score += PASSED_PAWN_BASE_BONUS + max(0, advancement) * PASSED_PAWN_ADVANCE_BONUS
+        return score
+
+    def evaluate_rook_activity(self, rooks, friendly_pawn_files, enemy_pawn_files, white):
+        score = 0
+        seventh_rank = 1 if white else 6
+        for row, col in rooks:
+            if friendly_pawn_files[col] == 0:
+                if enemy_pawn_files[col] == 0:
+                    score += ROOK_OPEN_FILE_BONUS
+                else:
+                    score += ROOK_SEMI_OPEN_FILE_BONUS
+            if row == seventh_rank:
+                score += ROOK_SEVENTH_RANK_BONUS
+        return score
+
+    def king_safety_penalty_from_features(
+        self,
+        board,
+        king_square,
+        color,
+        friendly_pawn_files,
+        enemy_pawn_files,
+    ):
+        if king_square is None:
+            return 0
+
+        king_row, king_col = king_square
+        attacker_color = 'black' if color == 'white' else 'white'
+        penalty = 120 if self.is_square_attacked(board, king_row, king_col, attacker_color) else 0
+        friendly_pawn = 1 if color == 'white' else 7
+        forward = -1 if color == 'white' else 1
+        shield_row = king_row + forward
+
+        for col in range(max(0, king_col - 1), min(8, king_col + 2)):
+            if not (0 <= shield_row < 8 and board[shield_row][col] == friendly_pawn):
+                penalty += KING_MISSING_SHIELD_PENALTY
+            if friendly_pawn_files[col] == 0:
+                if enemy_pawn_files[col] == 0:
+                    penalty += KING_OPEN_FILE_PENALTY
+                else:
+                    penalty += KING_SEMI_OPEN_FILE_PENALTY
+
+        return penalty
 
     def evaluate_king_safety(self, board):
         white_penalty = self.king_safety_penalty(board, 'white')
