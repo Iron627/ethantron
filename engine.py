@@ -61,6 +61,8 @@ TT_EXACT = 0
 TT_LOWERBOUND = 1
 TT_UPPERBOUND = 2
 TT_MAX_ENTRIES = 500000
+KILLER_MOVE_PRIMARY_BONUS = 1000
+KILLER_MOVE_SECONDARY_BONUS = 900
 
 _zobrist_rng = random.Random(0)
 ZOBRIST_PIECE = [
@@ -179,6 +181,8 @@ class Board:
         self.result_text = None
         self.tt = {}
         self.qtt = {}
+        self.killer_moves = {}
+        self.history_moves = {}
         self.search_deadline = None
 
     def is_square_attacked(self, board, row, col, attacker_color):
@@ -504,6 +508,7 @@ class Board:
         maximizing,
         en_passant_target=USE_BOARD_STATE,
         castling_rights=None,
+        ply=0,
     ):
         if self.search_deadline is not None and time.monotonic() >= self.search_deadline:
             raise TimeoutError
@@ -551,7 +556,10 @@ class Board:
                 return -MATE_SCORE if maximizing else MATE_SCORE
             return 0
 
-        moves.sort(key=lambda move: self.score_move(board, move, en_passant_target), reverse=True)
+        moves.sort(
+            key=lambda move: self.order_move_score(board, move, depth, ply, en_passant_target),
+            reverse=True,
+        )
         if tt_entry is not None and tt_entry[3] in moves:
             tt_move = tt_entry[3]
             moves.remove(tt_move)
@@ -575,12 +583,14 @@ class Board:
                     False,
                     next_en_passant,
                     next_castling,
+                    ply + 1,
                 )
                 if score > best:
                     best = score
                     best_move = move
                 alpha = max(alpha, best)
                 if beta <= alpha:
+                    self.record_cutoff_move(board, move, depth, ply, en_passant_target)
                     break
             if len(self.tt) >= TT_MAX_ENTRIES:
                 self.tt.clear()
@@ -610,12 +620,14 @@ class Board:
                 True,
                 next_en_passant,
                 next_castling,
+                ply + 1,
             )
             if score < best:
                 best = score
                 best_move = move
             beta = min(beta, best)
             if beta <= alpha:
+                self.record_cutoff_move(board, move, depth, ply, en_passant_target)
                 break
         if len(self.tt) >= TT_MAX_ENTRIES:
             self.tt.clear()
@@ -769,6 +781,41 @@ class Board:
             )
         )
 
+    def is_quiet_move(self, board, move, en_passant_target=None):
+        return not self.is_tactical_move(board, move, en_passant_target)
+
+    def history_move_key(self, board, move):
+        start, end, _ = normalize_move(move)
+        moving_piece = board[start[0]][start[1]]
+        return moving_piece, start, end
+
+    def record_cutoff_move(self, board, move, depth, ply, en_passant_target=None):
+        if not self.is_quiet_move(board, move, en_passant_target):
+            return
+
+        killers = self.killer_moves.setdefault(ply, [])
+        if move in killers:
+            killers.remove(move)
+        killers.insert(0, move)
+        del killers[2:]
+
+        history_key = self.history_move_key(board, move)
+        self.history_moves[history_key] = self.history_moves.get(history_key, 0) + depth * depth
+
+    def order_move_score(self, board, move, depth, ply, en_passant_target=None):
+        score = self.score_move(board, move, en_passant_target)
+        if not self.is_quiet_move(board, move, en_passant_target):
+            return score
+
+        killers = self.killer_moves.get(ply, ())
+        if killers and move == killers[0]:
+            score += KILLER_MOVE_PRIMARY_BONUS
+        elif len(killers) > 1 and move == killers[1]:
+            score += KILLER_MOVE_SECONDARY_BONUS
+
+        score += self.history_moves.get(self.history_move_key(board, move), 0)
+        return score
+
     def score_move(self, board, move, en_passant_target=None):
         start, end, promotion_choice = normalize_move(move)
         moving_piece = board[start[0]][start[1]]
@@ -801,7 +848,10 @@ class Board:
         best_move = None
         best_score = float('-inf')
         moves = self.get_all_moves(self.board, True, self.en_passant_target, self.castling_rights)
-        moves.sort(key=lambda move: self.score_move(self.board, move, self.en_passant_target), reverse=True)
+        moves.sort(
+            key=lambda move: self.order_move_score(self.board, move, depth, 0, self.en_passant_target),
+            reverse=True,
+        )
 
         self.search_deadline = time.monotonic() + time_limit if time_limit is not None else None
         try:
@@ -823,6 +873,7 @@ class Board:
                     False,
                     en_passant_after_move,
                     castling_after_move,
+                    1,
                 )
                 if score > best_score:
                     best_score = score
