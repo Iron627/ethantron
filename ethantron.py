@@ -165,17 +165,26 @@ class UCIEngine:
         i = 1
         while i < len(tokens):
             key = tokens[i]
-            if key in {"wtime", "btime", "winc", "binc", "depth"} and i + 1 < len(tokens):
+            if key in {"wtime", "btime", "winc", "binc", "depth", "movetime"} and i + 1 < len(tokens):
                 try:
                     options[key] = int(tokens[i + 1])
                 except ValueError:
                     pass
                 i += 2
                 continue
+            if key == "infinite":
+                options[key] = True
             i += 1
         return options
 
     def choose_time_limit(self, options):
+        if options.get("infinite"):
+            return None
+        if "movetime" in options:
+            return max(0.001, options["movetime"] / 1000.0)
+        if "depth" in options and "wtime" not in options and "btime" not in options:
+            return None
+
         white_to_move = not self.board.turn
         remaining = options.get("wtime" if white_to_move else "btime")
         increment = options.get("winc" if white_to_move else "binc", 0)

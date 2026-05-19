@@ -66,6 +66,9 @@ KILLER_MOVE_PRIMARY_BONUS = 1000
 KILLER_MOVE_SECONDARY_BONUS = 900
 NULL_MOVE_REDUCTION = 2
 NULL_MOVE_MIN_DEPTH = NULL_MOVE_REDUCTION + 1
+LMR_MIN_DEPTH = 2
+LMR_LATE_MOVE_INDEX = 2
+LMR_REDUCTION = 1
 PASSED_PAWN_BASE_BONUS = 20
 PASSED_PAWN_ADVANCE_BONUS = 8
 DOUBLED_PAWN_PENALTY = 18
@@ -943,7 +946,8 @@ class Board:
         if side_to_move:
             best = float('-inf')
             best_move = None
-            for move in moves:
+            for move_index, move in enumerate(moves):
+                is_quiet = self.is_quiet_move(board, move, en_passant_target)
                 next_en_passant, undo = self.make_search_move(
                     board,
                     move,
@@ -951,9 +955,18 @@ class Board:
                     castling_rights,
                 )
                 try:
+                    reduced = (
+                        depth >= LMR_MIN_DEPTH
+                        and move_index >= LMR_LATE_MOVE_INDEX
+                        and not in_check
+                        and is_quiet
+                    )
+                    search_depth = depth - 1 - LMR_REDUCTION if reduced else depth - 1
+                    if search_depth < 0:
+                        search_depth = 0
                     score = self.minimax(
                         board,
-                        depth - 1,
+                        search_depth,
                         alpha,
                         beta,
                         False,
@@ -961,6 +974,17 @@ class Board:
                         castling_rights,
                         ply + 1,
                     )
+                    if reduced and score > alpha:
+                        score = self.minimax(
+                            board,
+                            depth - 1,
+                            alpha,
+                            beta,
+                            False,
+                            next_en_passant,
+                            castling_rights,
+                            ply + 1,
+                        )
                 finally:
                     self.unmake_search_move(board, castling_rights, undo)
                 if score > best:
@@ -983,7 +1007,8 @@ class Board:
 
         best = float('inf')
         best_move = None
-        for move in moves:
+        for move_index, move in enumerate(moves):
+            is_quiet = self.is_quiet_move(board, move, en_passant_target)
             next_en_passant, undo = self.make_search_move(
                 board,
                 move,
@@ -991,9 +1016,18 @@ class Board:
                 castling_rights,
             )
             try:
+                reduced = (
+                    depth >= LMR_MIN_DEPTH
+                    and move_index >= LMR_LATE_MOVE_INDEX
+                    and not in_check
+                    and is_quiet
+                )
+                search_depth = depth - 1 - LMR_REDUCTION if reduced else depth - 1
+                if search_depth < 0:
+                    search_depth = 0
                 score = self.minimax(
                     board,
-                    depth - 1,
+                    search_depth,
                     alpha,
                     beta,
                     True,
@@ -1001,6 +1035,17 @@ class Board:
                     castling_rights,
                     ply + 1,
                 )
+                if reduced and score < beta:
+                    score = self.minimax(
+                        board,
+                        depth - 1,
+                        alpha,
+                        beta,
+                        True,
+                        next_en_passant,
+                        castling_rights,
+                        ply + 1,
+                    )
             finally:
                 self.unmake_search_move(board, castling_rights, undo)
             if score < best:
